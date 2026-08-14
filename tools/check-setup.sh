@@ -99,23 +99,35 @@ fi
 # ---------------------------------------------------------------- regra udev
 secao "4. Regra udev"
 
-regra=$(ls /etc/udev/rules.d/*conspit*.rules 2>/dev/null | head -1)
-if [[ -n "$regra" ]]; then
-  prefixo=$(basename "$regra" | grep -oE '^[0-9]+')
-  if [[ -n "$prefixo" && "$prefixo" -lt 73 ]]; then
-    ok "regra instalada com prefixo correto ($(basename "$regra"))"
-  else
-    falha "regra instalada como $(basename "$regra") -- prefixo >= 73" \
-          "o systemd aplica o TAG=uaccess em 73-seat-late.rules; renomeie para 70-:
-             sudo rm $regra
-             sudo cp $repo/udev/70-conspit-ares.rules /etc/udev/rules.d/
-             sudo udevadm control --reload-rules && sudo udevadm trigger"
-  fi
+regra_oficial=/etc/udev/rules.d/70-conspit.rules
+if [[ -f "$regra_oficial" ]]; then
+  ok "regra instalada (70-conspit.rules)"
 else
   falha "regra udev NAO instalada" \
-        "sudo cp $repo/udev/70-conspit-ares.rules /etc/udev/rules.d/
+        "sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
              sudo udevadm control --reload-rules && sudo udevadm trigger"
 fi
+
+# Outras regras Conspit na maquina. Reportadas UMA A UMA, nunca em bloco: o
+# glob *conspit* tambem pega regras de OUTROS dispositivos da marca (pedais,
+# volantes), que nao sao deste projeto e nao devem ser apagadas as cegas.
+for r in /etc/udev/rules.d/*conspit*.rules; do
+  [[ -e "$r" ]] || continue
+  [[ "$r" == "$regra_oficial" ]] && continue
+  prefixo=$(basename "$r" | grep -oE '^[0-9]+')
+  if [[ -n "$prefixo" && "$prefixo" -ge 73 ]]; then
+    aviso "regra legada $(basename "$r") -- prefixo $prefixo, o TAG=uaccess dela NUNCA dispara" \
+          "o systemd efetiva a tag em 73-seat-late.rules. Veja o conteudo antes de mexer:
+             cat $r
+           Se for de um device Conspit, a 70-conspit.rules ja cobre o acesso e esta pode sair:
+             sudo rm $r
+           Se ela fizer algo mais (ex.: ENV{ID_INPUT_JOYSTICK}=\"1\"), migre para a
+           secao 3 da 70-conspit.rules em vez de descartar."
+  else
+    aviso "outra regra Conspit instalada: $(basename "$r")" \
+          "confira se nao conflita com a 70-conspit.rules: cat $r"
+  fi
+done
 
 # a regra chama este binario por caminho absoluto
 if [[ -x /usr/bin/evdev-joystick ]]; then
@@ -124,7 +136,7 @@ else
   caminho=$(command -v evdev-joystick 2>/dev/null)
   if [[ -n "$caminho" ]]; then
     falha "evdev-joystick esta em $caminho, mas a regra chama /usr/bin/evdev-joystick" \
-          "ajuste o caminho em $repo/udev/70-conspit-ares.rules e reinstale"
+          "ajuste o caminho em $repo/udev/70-conspit.rules e reinstale"
   else
     falha "evdev-joystick ausente (pacote com jstest/fftest/evdev-joystick)" \
           "Fedora: sudo dnf install linuxconsoletools
@@ -161,6 +173,32 @@ else
     fi
   fi
 fi
+fi
+
+# Pedais CPP.LITE: opcionais, so verifica se estiverem no barramento.
+# NAO usar /dev/input/by-id/ aqui -- nos pedais ele aponta para o canal
+# vendor (1 eixo de 0-255), nao para os tres eixos reais. Ver secao 3 da
+# udev/70-conspit.rules.
+if lsusb 2>/dev/null | grep -qi '3514:0005'; then
+  ped=/dev/input/conspit-cpp-lite
+  if [[ ! -e "$ped" ]]; then
+    falha "pedais CPP.LITE presentes, mas $ped nao existe" \
+          "a secao 3 da regra nao esta aplicada:
+             sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
+             sudo udevadm control --reload-rules && sudo udevadm trigger"
+  elif ! command -v python3 >/dev/null; then
+    aviso "python3 ausente, nao da para verificar os eixos dos pedais"
+  else
+    ruins=$(python3 "$repo/tools/evdev_info.py" "$ped" 2>/dev/null \
+            | grep -cE '^\s+ABS_(Y|Z|RX)\b.*fuzz/flat ruins')
+    if [[ "$ruins" == "0" ]]; then
+      ok "pedais CPP.LITE com fuzz/flat zerados"
+    else
+      falha "pedais CPP.LITE: $ruins eixo(s) ainda com fuzz/flat ruins" \
+            "sudo udevadm control --reload-rules && sudo udevadm trigger
+             e reconecte os pedais"
+    fi
+  fi
 fi
 
 # ------------------------------------------------------------------ software

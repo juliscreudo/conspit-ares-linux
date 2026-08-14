@@ -132,7 +132,7 @@ lsusb -v -d VID:PID                    # interfaces e endpoints (HID? CDC?)
    simultâneos e todos os condicionais (spring, damper, inertia, friction, constant,
    ramp, periódicos). O kernel carregou `hid-pidff` sozinho via `hid-generic`.
    **A regra udev é necessária e o problema é pior que o do wiki** — ver
-   `udev/99-conspit-ares.rules`.
+   `udev/70-conspit.rules`.
 4. **Configurador oficial: abre, conecta e opera.** Ver "Rodando o configurador" abaixo.
 5. **Protocolo: responde.** `sys.0.id?` não existe (não é comando do OpenFFBoard), mas
    `sys.0.help`, `sys.0.swver?`, `axis.0.power?` etc. respondem no formato documentado.
@@ -202,13 +202,14 @@ o plano B se o ConspitLink quebrar (atualização de firmware, de Wine ou do pr�
 
 | arquivo | o que faz |
 |---|---|
+| `tools/check-setup.sh` | verifica o ambiente inteiro e imprime a correção de cada falha |
 | `tools/probe_serial.py` | sonda **read-only** da CDC (só `?` e `!`, nunca `=`) |
 | `tools/evdev_info.py` | eixos com fuzz/flat + capacidades de FFB, sem disparar efeito |
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
 | `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
-| `udev/70-conspit-ares.rules` | zera fuzz/deadzone e libera hidraw (precisa de `sudo`) |
+| `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw (precisa de `sudo`) |
 
 ⚠️ **Segurança:** é uma base de 20 Nm. As ferramentas acima são deliberadamente somente de
 leitura. Não mandar `=`, `sys.0.save`, `sys.0.format`, `odrv.*` de calibração ou carregar
@@ -344,7 +345,82 @@ Como as regras rodam em ordem lexical, uma regra `99-` adiciona a tag depois des
 já ter passado: o builtin nunca dispara e o hidraw continua root-only — **em silêncio, sem
 erro nenhum**. Confirmado empiricamente: com `99-`, a correção de deadzone funcionou
 (`RUN+` roda no fim de qualquer jeito) mas o `uaccess` não. Por isso o arquivo é
-`70-conspit-ares.rules`.
+`70-conspit.rules`.
+
+**Segundo motivo do `70-`, descoberto em 2026-08-14.** Não é só o `73-`: quem concede ACL a
+joystick é `/usr/lib/udev/rules.d/70-uaccess.rules:61`
+
+```
+SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"
+```
+
+e quem classifica é o builtin `input_id`, chamado em `60-input-id.rules`. Isso explica a
+medição de 12/08 (o `event*` da base tinha ACL **sem** nenhuma regra deste repo instalada:
+ela é joystick). E significa que atribuir `ENV{ID_INPUT_JOYSTICK}="1"` só surte efeito se a
+regra ordenar **antes de `70-uaccess`** — `70-conspit` ordena (`c` < `u`), `99-` não.
+
+### Regra única para todos os devices Conspit (2026-08-14)
+
+`udev/70-conspit.rules` substituiu a antiga `70-conspit-ares.rules`. As três linhas de
+`TAG+="uaccess"` casam **só por `ATTRS{idVendor}=="3514"`**, sem `idProduct` — então base,
+2º MCU e pedais CPP ficam cobertos por um arquivo só. Apenas o `RUN+` do `evdev-joystick`
+é por PID, porque os valores de fuzz/flat têm de ser medidos device a device.
+
+Motivo da unificação: esta máquina tinha `99-conspit.rules` e `99-conspit-cpp.rules`
+(pedais CPP, PID `0005`) instaladas, e **as duas estavam parcialmente quebradas pelo
+prefixo**. O escopo casa com o repo: o `.pdb` do ConspitLink tem classes `CppLite`/`CppPro`/
+`CppEvo`, ou seja, é o mesmo app que atende os pedais.
+
+Precisão importante (medido em 2026-08-14, `udevadm test` + `getfacl`): em `99-`, o
+`TAG+="uaccess"` é **inerte** — a tag aparece em `CURRENT_TAGS` mas o ACL nunca é aplicado
+(o `event*` dos pedais ficou sem ACL de usuário). Já o `ENV{ID_INPUT_JOYSTICK}="1"`
+**funciona parcialmente**: a propriedade fica no banco do udev e é lida por quem consulta
+depois (SDL), mas chega tarde para os dois consumidores em tempo de regra —
+`60-persistent-input` (symlink `-joystick`) e `70-uaccess` (ACL). Ou seja: apagar a regra
+legada sem replicar essa atribuição **regride** a enumeração dos pedais nos jogos.
+
+### Pedais CPP.LITE — o que foi medido (2026-08-14)
+
+`3514:0005`, `Conspit CONSPIT CPP.LITE`. Descritor HID de 88 bytes com **duas collections
+na mesma interface USB**, e o kernel cria **dois** input devices:
+
+| collection | conteúdo | vira | `capabilities/abs` |
+|---|---|---|---|
+| `Usage(Joystick)`, report ID 1 | 3 eixos de 12 bits (Rx, Y, Z) | os três pedais | `e` |
+| `Usage(Counted Buffer)`, report ID 2 | 63 bytes vendor | um `ABS_MISC` inútil | `10000000000` |
+
+⚠️ **`/dev/input/by-id/` do CPP.LITE aponta para o canal vendor, não para os pedais.** As
+duas collections saem da mesma interface (`if00`), então o `60-persistent-input.rules` gera
+o mesmo nome de symlink para as duas e a última processada vence. Medir eixos por aquele
+caminho retorna **um** eixo de 0–255 e engana — foi o que aconteceu comigo antes de olhar o
+descritor. A regra agora discrimina por `ATTRS{capabilities/abs}=="e"` e cria
+`/dev/input/conspit-cpp-lite`, que é o caminho a usar em qualquer ferramenta.
+
+Outros dois fatos medidos: o `input_id` **não** classifica os pedais como joystick sozinho
+(eles não têm botão nenhum, só eixos) — daí a necessidade do `ENV{ID_INPUT_JOYSTICK}="1"`; e
+os três eixos vêm com `fuzz 15, flat 255` em escala 0–4095, ou seja **~6% de curso morto no
+início de cada pedal**, que a regra zera.
+
+⚠️ **`ATTRS{}` múltiplos têm de casar no MESMO device da cadeia.** Do `man udev`:
+
+> If multiple ATTRS matches are specified, all of them must match on the same device.
+
+`idVendor`/`idProduct` moram no device USB; `capabilities/abs` mora no device de input.
+São devices diferentes na mesma cadeia — então `ATTRS{idProduct}=="0005"` +
+`ATTRS{capabilities/abs}=="e"` na mesma linha **nunca casa, e sem erro nenhum**. Custou uma
+rodada em 2026-08-14: a regra instalou, o `udevadm verify` passou, a seção 1 e a 2
+funcionaram, e a 3 simplesmente não fez nada. O diagnóstico é `udevadm test
+/sys/class/input/eventNN` — o arquivo aparece em "Reading rules file" mas nenhuma linha dele
+consta nas regras aplicadas.
+
+A saída é usar `ENV{ID_VENDOR_ID}`/`ENV{ID_MODEL_ID}` (propriedades postas pelo builtin
+`usb_id` em `60-persistent-input.rules`, já disponíveis quando uma regra `70-` roda), o que
+deixa **uma única chave `ATTRS` por linha**. A regra da base não sofre disso porque seus dois
+`ATTRS` são `idVendor` + `idProduct`, ambos no mesmo device USB.
+
+⚠️ Ao varrer regras instaladas, **nunca casar por `*conspit*` e agir em bloco**: o glob pega
+regras de outros devices da marca. Foi exatamente o bug que o `check-setup.sh` tinha — ele
+lia `99-conspit-cpp.rules` (pedais) como se fosse a da Ares e mandava `sudo rm` nela.
 
 ## Portabilidade entre distros (2026-08-14)
 
@@ -372,9 +448,12 @@ imprime a correção ao lado de cada falha. Ele roda com a base desligada (pula 
 de hardware) — feito assim de propósito, porque numa máquina nova a verificação vem antes
 de plugar. **Atualizar esse script sempre que um pré-requisito novo entrar.**
 
-⚠️ Os comandos de Arch/CachyOS ainda **não foram executados no hardware** — foram escritos
-a partir do mecanismo, não de teste. Ao validar na máquina do simulador, corrigir aqui e no
-README o que divergir.
+✅ **Executados na máquina do simulador (CachyOS) em 2026-08-14, com base e pedais ligados —
+sem divergência.** Confirmados: `linuxconsole` é o pacote certo e instala o binário em
+`/usr/bin/evdev-joystick`; o grupo da serial é mesmo `uucp`; `python-pyserial` resolve o
+pyserial. A regra udev, o `uaccess` e o `RUN+` do `evdev-joystick` funcionam igual ao
+Fedora. O único item não exercitado aqui é o lado Wine (o `ConspitLink2.0.exe` não está
+nesta máquina).
 
 ## Escopo e disclaimers (a herdar do projeto do pedal)
 - Foco **sim racing**. Um único setup: o do autor.

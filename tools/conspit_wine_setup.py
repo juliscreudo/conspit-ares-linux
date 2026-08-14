@@ -146,7 +146,7 @@ def configurar(prefixo, b, com):
         wine(prefixo, "reg", "add", par, "/v", valor, "/t", "REG_DWORD",
              "/d", dado, "/f")
         print(f"   {valor} = {dado}")
-    print("   (requer /dev/hidraw* acessivel -- ver udev/70-conspit-ares.rules)")
+    print("   (requer /dev/hidraw* acessivel -- ver udev/70-conspit.rules)")
 
     # Symlink por ultimo: `wine reg` pode disparar um wineboot que recria os
     # symlinks a partir do registro, sobrescrevendo o que criassemos antes.

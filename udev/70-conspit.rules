@@ -1,0 +1,156 @@
+# Conspit -- acesso aos devices e correcao dos eixos
+#
+# Um arquivo so para todos os dispositivos Conspit (VID 3514) da bancada:
+#
+#   3514:0301  CONSPIT ARES  base Ares Platinum 20Nm
+#                            -> CDC serial (/dev/ttyACM*) + HID joystick c/ FFB
+#   3514:0300  CONSPIT       2o MCU da base (canal do dash), HID vendor puro
+#   3514:0005  CONSPIT CPP.LITE  pedais -> HID joystick 3 eixos + canal vendor
+#
+# 0301 e 0300 aparecem com um unico cabo ligado ao PC porque ha um hub de
+# 4 portas DENTRO da base.
+#
+# Instalar:
+#   sudo cp udev/70-conspit.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Desinstalar:
+#   sudo rm /etc/udev/rules.d/70-conspit.rules
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Se voce tinha as regras antigas deste projeto, remova-as -- esta aqui as
+# substitui por inteiro:
+#   sudo rm -f /etc/udev/rules.d/70-conspit-ares.rules \
+#              /etc/udev/rules.d/99-conspit.rules \
+#              /etc/udev/rules.d/99-conspit-cpp.rules
+#
+# ⚠️ O PREFIXO 70- E' OBRIGATORIO, nao e' estetica. Ele resolve DUAS ordens:
+#
+#   1. /usr/lib/udev/rules.d/73-seat-late.rules e quem efetiva a tag:
+#          TAG=="uaccess", ENV{MAJOR}!="", RUN{builtin}+="uaccess"
+#      Numerada como 99-, esta regra adiciona a tag DEPOIS dessa checagem ja
+#      ter rodado: o builtin nunca dispara e o hidraw continua root-only --
+#      silenciosamente, sem erro nenhum. Testado em 2026-08-12: com 99- a
+#      deadzone e' corrigida (RUN+ roda no fim de qualquer jeito) mas o
+#      uaccess nao aplica.
+#
+#   2. /usr/lib/udev/rules.d/70-uaccess.rules:61 concede ACL a joystick:
+#          SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"
+#      "70-conspit" ordena ANTES de "70-uaccess" (c < u), entao um
+#      ENV{ID_INPUT_JOYSTICK}="1" atribuido aqui ainda e' visto por ela.
+#      Em 99- seria tarde demais para as duas coisas.
+#
+# Quem classifica o device como joystick e' o builtin input_id, chamado em
+# /usr/lib/udev/rules.d/60-input-id.rules.
+
+
+# --------------------------------------------------------------------------
+# 1. Acesso aos devices (vale para TODO dispositivo Conspit)
+# --------------------------------------------------------------------------
+# Casam so por idVendor, de proposito: qualquer periferico Conspit ligado na
+# bancada (base, 2o MCU, pedais, volantes) fica acessivel sem uma regra nova.
+#
+# Por padrao /dev/hidraw* e root-only. Sem isto o ConspitLink nao consegue
+# falar com os canais proprietarios:
+#
+#   hidraw da 0301  -> interface de comandos por HID (report ID 0xA1)
+#   hidraw da 0300  -> 2o MCU da base, por onde passa a telemetria do dash
+#
+# O logind ja da ACL para o event* da base porque ela e' classificada como
+# joystick (ver 70-uaccess.rules:61 no cabecalho), mas nao da para hidraw
+# nem para o event* da 0300, que nao e' joystick.
+#
+# TAG+="uaccess" faz o logind conceder ACL ao usuario da sessao ativa --
+# preferivel a MODE="0666", que liberaria para qualquer usuario da maquina.
+
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3514", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3514", TAG+="uaccess"
+
+
+# --------------------------------------------------------------------------
+# 2. Base Ares (0301): zerar fuzz e deadzone dos eixos
+# --------------------------------------------------------------------------
+# O hid-generic aplica defaults ruins. Medido no hardware em 2026-08-12,
+# antes desta regra:
+#
+#   ABS_X          min -32767  max 32767  fuzz 255  flat 4095
+#   demais eixos   min      0  max  4095  fuzz  15  flat  255
+#
+# fuzz=255 no eixo do volante filtra qualquer variacao menor que ~0.4% do
+# curso, o que serrilha o esterco; flat=4095 declara uma zona morta de
+# ~12.5% em volta do centro. Ambos precisam ir a zero.
+#
+# Depende do binario `evdev-joystick`:
+#   Fedora          sudo dnf install linuxconsoletools
+#   Arch/CachyOS    sudo pacman -S linuxconsole
+#
+# O RUN+ abaixo usa caminho ABSOLUTO porque o udev nao tem PATH utilizavel.
+# Se na sua distro o binario nao estiver em /usr/bin, ajuste a linha:
+#   command -v evdev-joystick
+# `tools/check-setup.sh` verifica isso e avisa.
+#
+# Conferir depois (fuzz e flat devem estar zerados):
+#   python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick
+
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=="0301", ENV{ID_INPUT_JOYSTICK}=="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
+
+
+# --------------------------------------------------------------------------
+# 3. Pedais CPP.LITE (0005)
+# --------------------------------------------------------------------------
+# Medido no hardware em 2026-08-14 (`lsusb`: "Conspit CONSPIT CPP.LITE").
+#
+# O descritor HID (88 bytes) declara DUAS collections, e o kernel cria DOIS
+# input devices a partir da MESMA interface USB (if00):
+#
+#   collection 1  Usage(Joystick), report ID 1
+#                 3 eixos de 12 bits: Rx, Y, Z  -> os tres pedais
+#                 vira ABS_RX / ABS_Y / ABS_Z   (capabilities/abs == "e")
+#   collection 2  Usage(Counted Buffer), report ID 2
+#                 63 bytes vendor            -> canal de dados, nao e' pedal
+#                 vira um unico ABS_MISC     (capabilities/abs == "10000000000")
+#
+# ⚠️ ARMADILHA: como as duas nascem da mesma interface, o
+# 60-persistent-input.rules gera o MESMO nome de symlink para as duas
+# (usb-...-event-if00) e a ultima processada vence. Na pratica o
+# /dev/input/by-id/ do CPP.LITE aponta para o canal VENDOR, nao para os
+# pedais. Medir eixos por aquele caminho da 1 eixo de 0-255 e engana.
+# Por isso as regras abaixo discriminam por ATTRS{capabilities/abs}=="e"
+# e criam um symlink proprio, estavel: /dev/input/conspit-cpp-lite
+#
+# Se um dia o firmware mudar o conjunto de eixos, esse "e" muda e o symlink
+# some (falha visivel, nao silenciosa). Redescubra com:
+#   cat /sys/class/input/input*/capabilities/abs
+#   cat /proc/bus/input/devices   # procure a linha B: ABS= do CPP.LITE
+#
+# ⚠️ POR QUE ESTAS DUAS LINHAS USAM ENV{} E NAO ATTRS{} PARA O VID/PID
+# Do man udev, verbete ATTRS{filename}:
+#     "If multiple ATTRS matches are specified, all of them must match on
+#      the same device."
+# idVendor/idProduct ficam no device USB (5-2.2.1); capabilities/abs fica no
+# device de input (inputNN). Sao devices DIFERENTES na mesma cadeia, entao
+# ATTRS{idProduct} + ATTRS{capabilities/abs} na mesma linha NUNCA casa --
+# silenciosamente, sem erro. Foi exatamente o que aconteceu em 2026-08-14:
+# a regra instalou, tudo o mais funcionou, e a secao 3 nao fez nada.
+# ID_VENDOR_ID/ID_MODEL_ID sao propriedades postas pelo builtin usb_id em
+# 60-persistent-input.rules, ou seja, ja existem quando esta regra roda.
+# Assim sobra uma unica chave ATTRS por linha e a restricao some.
+
+# (a) Classificacao como joystick.
+# O input_id NAO classifica estes pedais sozinho -- eles nao tem botao algum,
+# so eixos. Sem esta linha o SDL pode nao enumera-los nos jogos. Note que ela
+# roda tarde demais para o 60-persistent-input (o symlink -event-joystick do
+# by-id nao chega a ser criado); e' o proprio SYMLINK+= abaixo que resolve.
+# Escopo restrito ao no' real de proposito: marcar o canal vendor como
+# joystick cria um controle fantasma de 1 eixo nos jogos.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID}=="0005", ATTRS{capabilities/abs}=="e", ENV{ID_INPUT_JOYSTICK}="1"
+
+# (b) Symlink estavel + zerar fuzz/flat dos tres pedais.
+# Medido antes desta regra: ABS_Y/ABS_Z/ABS_RX, min 0 max 4095, fuzz 15,
+# flat 255. O flat=255 come os primeiros ~6% do curso de CADA pedal -- num
+# pedal de freio isso e' curso morto no inicio do acionamento.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID}=="0005", ATTRS{capabilities/abs}=="e", SYMLINK+="input/conspit-cpp-lite", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
+
+# Conferir depois (fuzz e flat devem estar zerados nos tres eixos):
+#   python3 tools/evdev_info.py /dev/input/conspit-cpp-lite

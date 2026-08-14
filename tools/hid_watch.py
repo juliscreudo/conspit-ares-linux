@@ -76,7 +76,7 @@ def main():
             fd_hid = os.open(dev_hid, os.O_RDONLY | os.O_NONBLOCK)
         except PermissionError:
             print(f"!! sem permissao para ler {dev_hid} -- instale "
-                  f"udev/70-conspit-ares.rules")
+                  f"udev/70-conspit.rules")
     if dev_ev:
         try:
             fd_ev = os.open(dev_ev, os.O_RDONLY | os.O_NONBLOCK)

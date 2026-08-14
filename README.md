@@ -3,10 +3,10 @@
 Ferramentas e passo a passo para usar a base **Conspit Ares Platinum 20 Nm** no Linux,
 incluindo o **ConspitLink 2.0 rodando sob Wine** com controle da base em tempo real.
 
-**Validado com o hardware ligado em Fedora 44** (kernel 7.1, Wine 11.14), em 2026-08-12.
-As instruções são escritas para funcionar em qualquer distro com systemd — os comandos de
-Arch/CachyOS estão indicados, mas **ainda não foram executados no hardware**. Se algo
-divergir por lá, `tools/check-setup.sh` aponta o quê.
+Validado com o hardware ligado em **Fedora 44** (2026-08-12, Wine 11.14) e em **CachyOS**
+(2026-08-14, kernel 7.1) — neste último tudo menos o lado Wine, que não foi exercitado lá.
+Os comandos de cada distro estão indicados onde diferem. Se algo divergir na sua,
+`tools/check-setup.sh` aponta o quê.
 
 Projeto pessoal, sem garantia nem suporte. Firmware, hardware e o projeto OpenFFBoard são
 de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
@@ -17,6 +17,7 @@ de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 |---|---|
 | FFB nativo em jogos (via `hid-generic` + `hid-pidff`) | ✅ 40 slots, todos os efeitos condicionais |
 | Zona morta / serrilhado dos eixos | ✅ corrigido por regra udev |
+| Pedais CPP.LITE (3 eixos, curso morto, enumeração) | ✅ mesma regra udev, via `/dev/input/conspit-cpp-lite` |
 | Protocolo de comandos direto pela serial | ✅ documentado e testado |
 | **ConspitLink 2.0 sob Wine** | ✅ config e telemetria em tempo real |
 | Leitura de ângulo no ConspitLink | ❌ trava em `+0.00°` (cosmético — ver Limitações) |
@@ -96,22 +97,40 @@ testes de hardware).
 Corrige os eixos **e** libera o acesso HID que o ConspitLink precisa.
 
 ```bash
-sudo cp udev/70-conspit-ares.rules /etc/udev/rules.d/
+sudo cp udev/70-conspit.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-> ⚠️ O prefixo **`70-`** é obrigatório. O systemd aplica o `TAG="uaccess"` em
-> `73-seat-late.rules`; numerada como `99-`, a regra adiciona a tag tarde demais e o
-> `/dev/hidraw*` continua root-only **em silêncio, sem erro nenhum**.
+É **um arquivo só para todos os dispositivos Conspit** (VID `3514`): a seção de acesso casa
+por vendor, então base, 2º MCU e pedais ficam cobertos sem uma regra por device. Se você
+tinha regras antigas (`70-conspit-ares.rules`, `99-conspit*.rules`), remova-as — esta as
+substitui. O `tools/check-setup.sh` lista o que sobrou, uma a uma.
 
-Conferir (com a base ligada) — `fuzz` e `flat` devem estar zerados:
+> ⚠️ O prefixo **`70-`** é obrigatório, e por **dois** motivos:
+>
+> 1. O systemd efetiva o `TAG="uaccess"` em `73-seat-late.rules`. Numerada como `99-`, a
+>    regra adiciona a tag tarde demais e o `/dev/hidraw*` continua root-only **em silêncio,
+>    sem erro nenhum**.
+> 2. Quem dá ACL a joystick é `70-uaccess.rules:61`
+>    (`ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"`). Como `70-conspit` ordena antes de
+>    `70-uaccess` (`c` < `u`), atribuir `ID_INPUT_JOYSTICK="1"` aqui ainda é visto por ela.
+
+Conferir (com o hardware ligado) — `fuzz` e `flat` devem estar zerados:
 
 ```bash
 python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick
+python3 tools/evdev_info.py /dev/input/conspit-cpp-lite    # se tiver os pedais
 ```
 
 Antes da regra o eixo do volante vinha com `fuzz 255` e `flat 4095` — respectivamente um
-serrilhado no esterço e uma **zona morta de ~12,5% em volta do centro**.
+serrilhado no esterço e uma **zona morta de ~12,5% em volta do centro**. Os três eixos dos
+pedais CPP.LITE vinham com `fuzz 15` e `flat 255` em escala 0–4095, ou seja **~6% de curso
+morto no começo de cada pedal**.
+
+> ⚠️ Nos pedais, **não** use `/dev/input/by-id/`. O CPP.LITE expõe duas collections HID na
+> mesma interface USB, o `by-id` acaba apontando para o canal vendor (um eixo de 0–255) e
+> não para os pedais. O symlink `/dev/input/conspit-cpp-lite`, criado pela regra, é o
+> caminho estável para os três eixos reais.
 
 ## Passo 2 — Verificar o hardware
 
@@ -210,7 +229,7 @@ número interessar, ele está disponível nativamente (`axis.0.pos?` pela serial
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
 | `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
-| `udev/70-conspit-ares.rules` | zera fuzz/deadzone e libera hidraw |
+| `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |
 
 > ⚠️ **É uma base de 20 Nm.** As ferramentas de diagnóstico são deliberadamente somente de
 > leitura. Não mande `=`, `sys.0.save`, `sys.0.format` nem comandos de calibração do ODrive
