@@ -34,5 +34,36 @@ if [[ "${1:-}" == "--limpo" ]]; then
   sleep 2
 fi
 
+# Shim dos pedais CPP.LITE: sem ele o app nao enxerga a pedaleira sob Wine
+# (o Wine expoe so a 1a top-level collection do descritor -- ver a secao
+# "Pedais CPP.LITE" no CLAUDE.md). Sobe junto e cai junto; se os pedais nao
+# estiverem ligados, nao faz nada.
+shim_pid=""
+if lsusb 2>/dev/null | grep -qi '3514:0005'; then
+  if pgrep -f 'cpp_hid_sh[i]m' >/dev/null; then
+    echo "shim dos pedais: ja estava rodando"
+  elif [[ -w /dev/uhid ]]; then
+    python3 -u "$repo/tools/cpp_hid_shim.py" >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
+    shim_pid=$!
+    sleep 2
+    if kill -0 "$shim_pid" 2>/dev/null; then
+      echo "shim dos pedais: no ar (pid $shim_pid)"
+    else
+      echo "shim dos pedais FALHOU -- veja $WINEPREFIX/cpp_hid_shim.log" >&2
+      shim_pid=""
+    fi
+  else
+    echo "pedais CPP.LITE ligados, mas /dev/uhid nao esta acessivel." >&2
+    echo "  sudo cp $repo/udev/70-uhid-shim.rules /etc/udev/rules.d/" >&2
+    echo "  sudo udevadm control --reload-rules && sudo udevadm trigger" >&2
+    echo "  (sem isso o app abre normalmente, so nao lista os pedais)" >&2
+  fi
+fi
+
+# derruba o shim junto com o app, inclusive se o app morrer sozinho
+if [[ -n "$shim_pid" ]]; then
+  trap 'kill "$shim_pid" 2>/dev/null || true' EXIT INT TERM
+fi
+
 cd "$app"
-exec wine ./ConspitLink2.0.exe "$@"
+wine ./ConspitLink2.0.exe "$@"

@@ -208,8 +208,11 @@ o plano B se o ConspitLink quebrar (atualização de firmware, de Wine ou do pr�
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
 | `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
+| `tools/cpp_hid_shim.py` | expõe a 2ª collection HID dos pedais (o app não os vê sem isso) |
+| `tools/hidenum.c` | enumera HID **de dentro do prefixo**: o que um app Windows enxerga |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw (precisa de `sudo`) |
+| `udev/70-uhid-shim.rules` | dá acesso a `/dev/uhid` para o shim (ler o cabeçalho antes) |
 
 ⚠️ **Segurança:** é uma base de 20 Nm. As ferramentas acima são deliberadamente somente de
 leitura. Não mandar `=`, `sys.0.save`, `sys.0.format`, `odrv.*` de calibração ou carregar
@@ -421,6 +424,81 @@ deixa **uma única chave `ATTRS` por linha**. A regra da base não sofre disso p
 ⚠️ Ao varrer regras instaladas, **nunca casar por `*conspit*` e agir em bloco**: o glob pega
 regras de outros devices da marca. Foi exatamente o bug que o `check-setup.sh` tinha — ele
 lia `99-conspit-cpp.rules` (pedais) como se fosse a da Ares e mandava `sudo rm` nela.
+
+## Os pedais CPP.LITE sob Wine — resolvido com shim de uhid (2026-08-14)
+
+**Sintoma:** o ConspitLink não listava os pedais (sem card, sem item na sidebar), embora eles
+funcionassem perfeitamente no Linux nativo, inclusive em jogos.
+
+### A causa, medida
+
+O descritor do CPP.LITE tem **duas top-level collections** (a de joystick, com os 3 eixos, e
+uma vendor de 63 bytes). O Windows cria **um device HID por collection** (`&Col01`, `&Col02`)
+e o app abre o segundo. O Wine cria **um device só e expõe apenas a primeira**.
+
+Isso não é dedução: `tools/hidenum.c`, compilado com mingw e rodado dentro do prefixo,
+mostra o que qualquer app Windows enxerga. Antes do shim:
+
+```
+VID_3514 PID_0005  usage_page 0x0001 usage 0x04  in 7   out 9   "CONSPIT CPP.LITE"
+VID_3514 PID_0300  usage_page 0x000C usage 0x01  in 64  out 64  "CONSPIT"
+VID_3514 PID_0301  usage_page 0x0001 usage 0x04  in 28  out 18  "CONSPIT ARES"
+```
+
+`in 7` = `1 + 3×2`: só os três eixos. O canal de 64 bytes dos pedais — mesmo formato do
+`0300`, que aparece normalmente — simplesmente não existe no prefixo. Se o Wine tivesse
+mesclado as duas collections num device, `in` seria 64; ele descartou a segunda.
+
+⚠️ **Não confundir os dois caminhos.** O pedal funcionar em jogo (Le Mans Ultimate etc.) usa
+o caminho **nativo** (evdev, 3 eixos); o ConspitLink usa o canal **HID vendor** dentro do
+Wine. Mesmo cabo USB, dois canais independentes — um funcionar não diz nada sobre o outro.
+
+### A solução
+
+`tools/cpp_hid_shim.py` cria, via `/dev/uhid`, um device HID virtual com o mesmo `3514:0005`
+contendo **só a segunda collection**, e repassa relatórios nos dois sentidos entre ele e o
+`/dev/hidraw` real. Depois dele o enumerador mostra a linha que faltava:
+
+```
+VID_3514 PID_0005  usage_page 0x0001 usage 0x3A  in 64 out 64  "CONSPIT CPP.LITE"
+```
+
+E o app passa a: listar `CPP LITE` como **Online** no lugar do CPP EVO, ler o firmware
+(`v2.2.0`), mostrar as abas Calibration/Vibration/Launch Control, acionar o haptic pelo botão
+`Test`, e até detectar firmware novo e oferecer atualização (**não atualizar por aqui** — ver
+`docs/protocolo-cpp-lite.md`). O `run-conspitlink.sh` sobe e derruba o shim junto com o app.
+
+O protocolo desse canal é **outro**, com prefixo `$` (`$version`, `$gdlinex`, `$getPWM1`),
+documentado em `docs/protocolo-cpp-lite.md`. Nada a ver com o protocolo OpenFFBoard da base.
+
+### Detalhes que não são óbvios
+
+1. **A regra udev precisou de outro discriminador.** O device virtual não tem pai USB, então
+   `ATTRS{idVendor}=="3514"` não casa. A linha nova casa por
+   `ATTRS{modalias}=="hid:b*v00003514p*"`, que existe nos dois casos. Sem ela o `hidraw`
+   virtual fica root-only e o Wine não abre.
+2. **O shim tem de ignorar devices virtuais ao procurar o hidraw real** — senão, depois de
+   subir, ele acha a si mesmo. Filtra por `/devices/virtual/` no realpath.
+3. **`/dev/uhid` é root-only por padrão.** A concessão está em `udev/70-uhid-shim.rules`,
+   **arquivo separado de propósito**: é uma capacidade do sistema, não um device Conspit.
+   Decisão consciente do usuário em 2026-08-14, com o trade-off entendido — quem tem acesso
+   a `/dev/uhid` pode fabricar um teclado virtual e digitar como o usuário da sessão, o que
+   numa sessão **Wayland** contorna o isolamento de entrada do compositor (no X11 seria quase
+   irrelevante, já que XTEST já permite isso). Alternativa mais fechada, se um dia
+   interessar: grupo dedicado + shim como usuário de serviço.
+4. **A pedaleira não fala sozinha:** zero relatórios não solicitados. Todo o tráfego é
+   pergunta/resposta iniciada pelo app.
+5. ⚠️ **O shim repassa escrita.** As outras ferramentas do repo são deliberadamente
+   read-only; esta não é — ao mexer em curva/calibração na GUI, vira escrita real na
+   pedaleira. Não confundir com as sondas.
+
+### Cuidado ao matar processos
+
+`pkill -f <padrão>` casa também com **a própria linha de comando do shell** que roda o
+`pkill`, e mata a si mesmo (aconteceu duas vezes em 2026-08-14). Use o truque do colchete:
+`pkill -f 'cpp_hid_sh[i]m'`. E `winedevice.exe` órfão às vezes sobrevive a `wineserver -k`,
+inclusive `-k9`: aí é `kill -9` por PID, senão os processos velhos continuam segurando os
+`hidraw` e a medição seguinte sai errada.
 
 ## Portabilidade entre distros (2026-08-14)
 

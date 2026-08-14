@@ -67,6 +67,13 @@ KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3514", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="3514", TAG+="uaccess"
 
+# A linha acima casa por ATTRS{idVendor}, que so existe em device USB. O
+# device HID virtual do tools/cpp_hid_shim.py nao tem pai USB nenhum, entao
+# precisa de outro discriminador: o modalias do proprio device HID, que
+# existe nos dois casos (b=bus, v=vendor, p=product).
+#   hid:b0003g0001v00003514p00000005
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{modalias}=="hid:b*v00003514p*", TAG+="uaccess"
+
 
 # --------------------------------------------------------------------------
 # 2. Base Ares (0301): zerar fuzz e deadzone dos eixos

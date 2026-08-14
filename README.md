@@ -4,7 +4,7 @@ Ferramentas e passo a passo para usar a base **Conspit Ares Platinum 20 Nm** no 
 incluindo o **ConspitLink 2.0 rodando sob Wine** com controle da base em tempo real.
 
 Validado com o hardware ligado em **Fedora 44** (2026-08-12, Wine 11.14) e em **CachyOS**
-(2026-08-14, kernel 7.1) — neste último tudo menos o lado Wine, que não foi exercitado lá.
+(2026-08-14, kernel 7.1, Wine 11.15) — nos dois casos incluindo o ConspitLink sob Wine.
 Os comandos de cada distro estão indicados onde diferem. Se algo divergir na sua,
 `tools/check-setup.sh` aponta o quê.
 
@@ -21,6 +21,7 @@ de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 | Protocolo de comandos direto pela serial | ✅ documentado e testado |
 | **ConspitLink 2.0 sob Wine** | ✅ config e telemetria em tempo real |
 | Leitura de ângulo no ConspitLink | ❌ trava em `+0.00°` (cosmético — ver Limitações) |
+| **Pedais CPP.LITE no ConspitLink** | ✅ via `tools/cpp_hid_shim.py` (Online, haptics, curvas) |
 | Telemetria de jogo → dash dos volantes | não investigado ainda |
 
 A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
@@ -170,6 +171,26 @@ O script deve terminar com `tudo certo.` e mostrar a linha do WMI com
 tools/run-conspitlink.sh
 ```
 
+### Pedais CPP.LITE (opcional)
+
+O `run-conspitlink.sh` sobe sozinho o `tools/cpp_hid_shim.py` quando detecta os pedais. Sem
+ele o app **não lista a pedaleira** — o Wine expõe só a primeira das duas collections HID do
+CPP.LITE, e o canal por onde o app conversa é justamente a segunda. O shim precisa de acesso
+a `/dev/uhid`:
+
+```bash
+sudo cp udev/70-uhid-shim.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+> ⚠️ Leia o cabeçalho do arquivo antes: ele concede ao usuário da sessão a capacidade de
+> criar dispositivos de entrada virtuais no kernel, o que numa sessão Wayland contorna o
+> isolamento de entrada do compositor. É uma decisão consciente, não um detalhe.
+
+Com isso o `CPP LITE` aparece Online, com Calibration, Vibration (o botão `Test` faz o haptic
+vibrar) e Launch Control. O protocolo desse canal está em
+[docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md).
+
 ### Por que o passo do `conspit_wine_setup.py` é necessário
 
 O Wine expõe portas seriais como dispositivos genéricos, **sem VID/PID de USB**. O
@@ -228,8 +249,11 @@ número interessar, ele está disponível nativamente (`axis.0.pos?` pela serial
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
 | `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
+| `tools/cpp_hid_shim.py` | expõe a 2ª collection HID dos pedais CPP.LITE ao app |
+| `tools/hidenum.c` | enumera HID de dentro do prefixo Wine (diagnóstico) |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |
+| `udev/70-uhid-shim.rules` | acesso a `/dev/uhid` para o shim dos pedais |
 
 > ⚠️ **É uma base de 20 Nm.** As ferramentas de diagnóstico são deliberadamente somente de
 > leitura. Não mande `=`, `sys.0.save`, `sys.0.format` nem comandos de calibração do ODrive
