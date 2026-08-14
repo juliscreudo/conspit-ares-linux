@@ -41,10 +41,29 @@ de uma CPP.LITE de 3 pedais (só o acelerador conectado no momento da captura):
 | `$getlimity` | `$limity100` | limite de curso |
 | `$getbarlimit` | `$barlimit` | limite da barra |
 
-Padrão das respostas: o eco do comando sem o `$`, seguido do valor. O `gdline` traz três
-grupos de números — provavelmente os pontos da curva do pedal. A resposta é imediata, uma
-por comando; a pedaleira **não** transmite nada espontaneamente (o shim mede zero relatórios
-não solicitados).
+Padrão das respostas: o eco do comando sem o `$`, seguido do valor. A resposta é imediata,
+uma por comando; a pedaleira **não** transmite nada espontaneamente (o shim mede zero
+relatórios não solicitados).
+
+### O formato do `gdline` — a curva do pedal
+
+As três respostas se segmentam em **cinco pontos** (quatro de dois dígitos e o último de
+três), que é a curva do "Pedal Curve Mapping":
+
+```
+xgdl 00 05 16 46 100     acelerador, progressiva
+ygdl 00 42 76 94 100     freio, sobe rápido e satura
+zgdl 00 25 50 75 100     embreagem, exatamente linear
+```
+
+O eixo Z ter saído linear perfeito é consistente com um canal **sem pedal conectado e sem
+configuração** — é a curva padrão. Decodificação inferida de três amostras; para confirmar,
+mexa na curva na GUI com o shim em `-v` e veja o comando de escrita correspondente.
+
+⚠️ **Não interpretar o valor bruto do eixo como "percentual de curso".** Cada canal tem
+calibração própria guardada na pedaleira: um freio hidráulico marca uma linha de base alta
+com o pedal solto, e o zero real vem da calibração, não do zero do ADC (0–4095). Confundir
+isso leva a concluir que o pedal está "pisado em repouso" quando não está.
 
 ## O que ainda não foi mapeado
 
