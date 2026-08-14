@@ -161,3 +161,26 @@ SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID
 
 # Conferir depois (fuzz e flat devem estar zerados nos tres eixos):
 #   python3 tools/evdev_info.py /dev/input/conspit-cpp-lite
+
+
+# --------------------------------------------------------------------------
+# 4. Joystick virtual do tools/cpp_hid_shim.py
+# --------------------------------------------------------------------------
+# O shim cria um segundo device virtual expondo os tres eixos NA ORDEM que o
+# ConspitLink espera (ver "Pedais CPP.LITE" no CLAUDE.md). Para o Wine
+# enxerga-lo faltavam duas coisas, ambas medidas em 2026-08-14:
+#
+#   - ACL no event*: o Wine roda como o usuario e precisa ABRIR o no'. Sem
+#     isso ele ignora o device em silencio -- foi o que aconteceu.
+#   - ID_INPUT_JOYSTICK: o backend evdev do winebus so considera devices
+#     marcados como joystick.
+#
+# Casa por ATTRS{name}, que e' o nome dado na criacao do device virtual.
+# Precisa ser UMA chave ATTRS so: name fica no device de input e modalias no
+# device HID pai, e o udev exige que ATTRS multiplos casem no MESMO device.
+#
+# ⚠️ Enquanto o shim roda, este device aparece nos jogos como uma pedaleira
+# a mais. Por isso o run-conspitlink.sh sobe o shim junto com o app e o
+# derruba ao fechar -- fora do ConspitLink ele nao existe.
+
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="CONSPIT CPP.LITE Axis", TAG+="uaccess", ENV{ID_INPUT_JOYSTICK}="1"

@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Abre o ConspitLink 2.0 no prefixo Wine isolado deste projeto.
 #
-#   tools/run-conspitlink.sh          abre o app
-#   tools/run-conspitlink.sh --limpo  derruba o Wine antes de abrir
+#   tools/run-conspitlink.sh             abre o app
+#   tools/run-conspitlink.sh --limpo     derruba o Wine antes de abrir
+#   tools/run-conspitlink.sh --sem-eixos nao cria o joystick virtual dos
+#                                        pedais (some da lista dos jogos;
+#                                        as barras do app voltam trocadas)
 #
 # O `--limpo` existe porque tirar o USB com o app aberto deixa o handle da
 # porta orfao no wineserver; na proxima abertura o app reclama "The base port
@@ -25,6 +28,17 @@ app="$WINEPREFIX/drive_c/Program Files (x86)/Conspit Link 2.0"
   echo "  wine \$repo/ConspitLink2.0.exe /S" >&2
   exit 1
 }
+
+sem_eixos=0
+shim_args=""
+args=()
+for a in "$@"; do
+  case "$a" in
+    --sem-eixos) sem_eixos=1; shim_args="--sem-eixos" ;;
+    *) args+=("$a") ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 if [[ "${1:-}" == "--limpo" ]]; then
   echo "derrubando o Wine deste prefixo..."
@@ -62,7 +76,25 @@ if lsusb 2>/dev/null | grep -qi '3514:0005'; then
   if shim_ativo; then
     echo "shim dos pedais: ja estava rodando"
   elif [[ -w /dev/uhid ]]; then
-    python3 -u "$repo/tools/cpp_hid_shim.py" --esperar >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
+    # O device virtual de EIXOS corrige os rotulos dos pedais na tela do app
+    # (sem ele o Wine entrega os eixos na ordem do evdev e o app mostra
+    # acelerador como embreagem). Em troca, ele aparece como uma pedaleira a
+    # mais na lista de controles dos jogos -- inerte, mas visivel.
+    #
+    # --sem-eixos derruba so essa parte: deteccao, haptics, curvas e
+    # telemetria continuam, porque tudo isso passa pelo canal vendor.
+    if [[ "$sem_eixos" == "1" ]]; then
+      # o app volta a ler o device real; entao ele nao pode ficar escondido
+      wine reg delete 'HKCU\Software\Wine\DirectInput\Joysticks' \
+           /v 'CONSPIT CPP.LITE' /f >/dev/null 2>&1 || true
+    else
+      # esconde o device real do DirectInput SO NESTE PREFIXO, para o app
+      # pegar o virtual (que tem os eixos na ordem certa)
+      wine reg add 'HKCU\Software\Wine\DirectInput\Joysticks' \
+           /v 'CONSPIT CPP.LITE' /d disabled /f >/dev/null 2>&1 || true
+    fi
+    python3 -u "$repo/tools/cpp_hid_shim.py" --esperar $shim_args \
+            >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
     shim_pid=$!
     sleep 2
     if kill -0 "$shim_pid" 2>/dev/null; then

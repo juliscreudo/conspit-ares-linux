@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <dinput.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define ALVO_VID 0x3514
 #define ALVO_PID 0x0005
@@ -72,8 +73,10 @@ static BOOL CALLBACK ao_achar_device(const DIDEVICEINSTANCEW *inst, void *ctx)
     return DIENUM_CONTINUE;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    int segundos = (argc > 1) ? atoi(argv[1]) : 0;
+
     if (FAILED(DirectInput8Create(GetModuleHandleW(NULL), DIRECTINPUT_VERSION,
                                   &IID_IDirectInput8W, (void **)&di, NULL))) {
         printf("DirectInput8Create falhou\n");
@@ -95,5 +98,60 @@ int main(void)
     printf("\n=== eixos, NA ORDEM DE ENUMERACAO ===\n");
     printf("(dwOfs 0=lX 4=lY 8=lZ 12=lRx 16=lRy 20=lRz)\n");
     IDirectInputDevice8_EnumObjects(dev, ao_achar_objeto, NULL, DIDFT_ABSAXIS);
+
+    /* Modo monitor: le o DIJOYSTATE2 igual o app faz e mostra quais campos
+     * se mexem. E' a unica forma de saber qual PEDAL alimenta qual campo --
+     * modelar a partir do descritor HID leva ao erro, porque o Wine pode
+     * estar sintetizando o device a partir do evdev. */
+    if (segundos > 0) {
+        DIJOYSTATE2 st;
+        LONG lo[6], hi[6];
+        const char *nome[6] = { "lX", "lY", "lZ", "lRx", "lRy", "lRz" };
+        int i, primeiro = 1;
+
+        IDirectInputDevice8_SetCooperativeLevel(dev, NULL,
+                                                DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+        IDirectInputDevice8_Acquire(dev);
+        printf("\n=== monitorando %d s -- PISE UM PEDAL DE CADA VEZ ===\n",
+               segundos);
+        fflush(stdout);
+
+        DWORD fim = GetTickCount() + segundos * 1000;
+        DWORD ultimo = 0;
+        while (GetTickCount() < fim) {
+            IDirectInputDevice8_Poll(dev);
+            if (FAILED(IDirectInputDevice8_GetDeviceState(dev, sizeof(st), &st))) {
+                IDirectInputDevice8_Acquire(dev);
+                Sleep(20);
+                continue;
+            }
+            LONG v[6] = { st.lX, st.lY, st.lZ, st.lRx, st.lRy, st.lRz };
+            if (primeiro) {
+                for (i = 0; i < 6; i++) lo[i] = hi[i] = v[i];
+                printf("repouso:");
+                for (i = 0; i < 6; i++) printf("  %s=%ld", nome[i], v[i]);
+                printf("\n");
+                primeiro = 0;
+            }
+            for (i = 0; i < 6; i++) {
+                if (v[i] < lo[i]) lo[i] = v[i];
+                if (v[i] > hi[i]) hi[i] = v[i];
+            }
+            DWORD seg = (GetTickCount() - (fim - segundos * 1000)) / 1000;
+            if (seg != ultimo) {
+                ultimo = seg;
+                for (i = 0; i < 6; i++) {
+                    if (hi[i] - lo[i] > 3000) {
+                        printf("  %3lus  %s mexeu (%ld..%ld)\n",
+                               (unsigned long)seg, nome[i], lo[i], hi[i]);
+                        lo[i] = hi[i] = v[i];
+                    }
+                }
+                fflush(stdout);
+            }
+            Sleep(10);
+        }
+        IDirectInputDevice8_Unacquire(dev);
+    }
     return 0;
 }

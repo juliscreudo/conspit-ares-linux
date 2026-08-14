@@ -492,6 +492,68 @@ documentado em `docs/protocolo-cpp-lite.md`. Nada a ver com o protocolo OpenFFBo
    read-only; esta não é — ao mexer em curva/calibração na GUI, vira escrita real na
    pedaleira. Não confundir com as sondas.
 
+### Os rótulos dos pedais saíam rotacionados — causa e correção (2026-08-14)
+
+Com o shim de vendor no ar, o app listava a pedaleira mas trocava os pedais: acelerador
+aparecia como embreagem, freio como acelerador, embreagem como freio.
+
+**Causa, medida:** o Wine **não usa o HID da pedaleira** — ele sintetiza o device a partir do
+`evdev`. A prova é o próprio `hidenum`: o device sai com `in 7 out 9 feat 33`, mas a primeira
+collection do descritor real daria 19 bytes de entrada, e a pedaleira não tem FFB nenhum
+(`out 9`/`feat 33` são relatórios que o Wine inventa). Confirmado também pelo device instance
+ID: quem passa por hidraw ganha prefixo `USB\`, quem passa pelo evdev ganha `WINEBUS\` — e os
+pedais são `WINEBUS\`.
+
+E o evdev ordena os eixos **pelo código**, não pela ordem do descritor:
+
+| pedal | usage no descritor | evdev | código | Wine entrega | Windows entregaria |
+|---|---|---|---|---|---|
+| freio | `Y` | `ABS_Y` | 1 | `lX` | `lY` |
+| embreagem | `Z` | `ABS_Z` | 2 | `lY` | `lZ` |
+| acelerador | `Rx` | `ABS_RX` | 3 | `lZ` | `lX` |
+
+O app lê `lX, lY, lZ` como acelerador, freio, embreagem — correto no Windows, onde o
+DirectInput respeita a ordem do descritor. Daí a rotação.
+
+⚠️ **Não retentar:** `EnableHidraw="3514:0005"` e `DisableInput=1` em
+`HKLM\System\CurrentControlSet\Services\winebus\Parameters` **não** mudam o backend —
+medido, o `winedevice` continua com o `event*` dos pedais aberto. (O `DisableInput` já tinha
+falhado em 12/08, por outro motivo.) Os nomes válidos de parâmetro, extraídos do
+`winebus.sys` desta versão: `EnableHidraw`, `DisableHidraw`, `DisableInput`, `DisableUdevd`,
+`Enable SDL`.
+
+**Correção:** o shim cria um **segundo** device virtual, um joystick declarando `X, Y, Z`
+nessa ordem e alimentado com os campos do relatório real na ordem do descritor
+(acelerador, freio, embreagem). Como o evdev numera `ABS_X(0) < ABS_Y(1) < ABS_Z(2)`, a
+ordem sai correta — permutação identidade, ajustável por `--ordem` se algum dia mudar. O
+device real fica escondido do DirectInput **só neste prefixo**
+(`HKCU\Software\Wine\DirectInput\Joysticks` → `"CONSPIT CPP.LITE"="disabled"`), senão o app
+poderia pegar qualquer um dos dois.
+
+Duas armadilhas que custaram tempo aqui:
+
+1. **O `event*` do device virtual nascia sem ACL** e o Wine, rodando como o usuário, o
+   ignorava **em silêncio**. A regra cobria `hidraw` por `modalias`, mas o `event*` ainda
+   casava por `ATTRS{idVendor}`, que não existe em device virtual. A linha nova casa por
+   `ATTRS{name}=="CONSPIT CPP.LITE Axis"` — e tem de ser **uma única** chave `ATTRS`, pelo
+   mesmo motivo de sempre (`name` fica no device de input, `modalias` no HID pai).
+2. **O Wine só considera devices com `ID_INPUT_JOYSTICK`** no caminho evdev; a mesma regra
+   atribui.
+
+### Conviver com o device virtual durante o jogo
+
+Os dois canais virtuais servem a coisas diferentes, e isso decide o que fazer:
+
+| canal | serve para | aparece nos jogos? |
+|---|---|---|
+| vendor (64 bytes) | detecção, firmware, curvas, haptics, telemetria | **não** (não é joystick, não tem nó de input) |
+| eixos (joystick) | só as barras da tela de pedais do app | sim |
+
+Ou seja: **não é preciso fechar o ConspitLink para jogar.** Deixe-o aberto; o device de eixos
+é inerte, só ocupa uma linha na lista de controles. Se algum jogo se incomodar,
+`tools/run-conspitlink.sh --sem-eixos` derruba só essa parte — nada funcional se perde, as
+barras da tela é que voltam a ficar trocadas.
+
 ### Cuidado ao matar processos
 
 `pkill -f <padrão>` casa também com **a própria linha de comando do shell** que roda o

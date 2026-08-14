@@ -119,12 +119,52 @@ def report_ids(rd):
     return ids
 
 
-def uhid_criar(fd, rd, nome):
+# Descritor do joystick virtual: 3 eixos de 12 bits declarados como
+# X, Y, Z. O Wine batiza os eixos na ORDEM DE APARICAO (foi assim que o
+# Rx do descritor real virou lX), entao declarar X/Y/Z deixa explicito
+# onde cada um vai cair no DIJOYSTATE2 que o app le.
+RD_EIXOS = bytes([
+    0x05, 0x01,        # Usage Page (Generic Desktop)
+    0x09, 0x04,        # Usage (Joystick)
+    0xA1, 0x01,        # Collection (Application)
+    0x85, 0x01,        #   Report ID (1)
+    0x15, 0x00,        #   Logical Minimum (0)
+    0x26, 0xFF, 0x0F,  #   Logical Maximum (4095)
+    0x75, 0x10,        #   Report Size (16)
+    0x95, 0x03,        #   Report Count (3)
+    0x09, 0x30,        #   Usage (X)
+    0x09, 0x31,        #   Usage (Y)
+    0x09, 0x32,        #   Usage (Z)
+    0x81, 0x02,        #   Input (Data,Var,Abs)
+    0xC0,              # End Collection
+])
+
+# Ordem padrao: qual campo do relatorio REAL alimenta cada eixo virtual.
+#
+#   relatorio real: campo 0 = acelerador, 1 = freio, 2 = embreagem
+#   o app le:       lX = Throttle, lY = Brake, lZ = Clutch
+#
+# Como o descritor virtual declara X, Y, Z NESSA ORDEM, e o Wine ordena os
+# eixos pelo codigo do evdev (ABS_X=0 < ABS_Y=1 < ABS_Z=2), alimentar os
+# campos na ordem do descritor real ja poe cada pedal no lugar certo:
+# identidade.
+#
+# O device REAL sai errado justamente porque seus usages sao Rx, Y, Z -- no
+# evdev viram ABS_RX(3), ABS_Y(1), ABS_Z(2), e o Wine ordena por codigo:
+# freio, embreagem, acelerador. Dai a rotacao que o app mostra.
+ORDEM_PADRAO = (0, 1, 2)
+NOME_EIXOS = "CONSPIT CPP.LITE Axis"
+
+
+def uhid_criar(fd, rd, nome, uniq):
+    """`uniq` PRECISA ser diferente entre os devices virtuais: o Wine
+    deduplica por VID/PID + serial, e com uniq vazio nos dois ele expunha
+    so o primeiro -- o segundo sumia sem erro nenhum."""
     ev = struct.pack("<I128s64s64sHHIIII",
                      UHID_CREATE2,
                      nome.encode()[:127],
                      b"conspit-cpp-shim",
-                     b"",
+                     uniq.encode()[:63],
                      len(rd), BUS_USB, VID, PID, 0, 0)
     os.write(fd, ev + rd)
 
@@ -163,14 +203,23 @@ def sessao(args, dev_real, sysfs):
                  "(sudo cp udev/70-uhid-shim.rules /etc/udev/rules.d/ && "
                  "sudo udevadm control --reload-rules && sudo udevadm trigger)")
 
-    uhid_criar(uhid, rd_vendor, "CONSPIT CPP.LITE")
-    print("device virtual criado. Ctrl-C para remover.\n")
+    uhid_criar(uhid, rd_vendor, "CONSPIT CPP.LITE", "shim-vendor")
+    print("canal vendor virtual criado.")
 
-    n_in = n_out = 0
+    uhid_eixos = None
+    if args.eixos:
+        uhid_eixos = os.open("/dev/uhid", os.O_RDWR)
+        uhid_criar(uhid_eixos, RD_EIXOS, NOME_EIXOS, "shim-eixos")
+        print("joystick virtual criado (%s): lX<-campo%d  lY<-campo%d  "
+              "lZ<-campo%d" % ((NOME_EIXOS,) + args.ordem))
+    print("Ctrl-C para remover.\n")
+
+    n_in = n_out = n_eixos = 0
     voltar = False
     try:
         while not PARAR[0]:
-            r, _, _ = select.select([hidraw, uhid], [], [], 0.5)
+            fds = [hidraw, uhid] + ([uhid_eixos] if uhid_eixos else [])
+            r, _, _ = select.select(fds, [], [], 0.5)
 
             if hidraw in r:                      # pedal -> app
                 try:
@@ -189,6 +238,17 @@ def sessao(args, dev_real, sysfs):
                     n_in += 1
                     if args.verbose:
                         print("  pedal->app  %s" % dados[:16].hex(" "))
+                elif dados and uhid_eixos and dados[0] == 1 and len(dados) >= 7:
+                    # posicoes dos pedais, permutadas para o app rotular certo
+                    campos = [struct.unpack_from("<H", dados, 1 + i * 2)[0]
+                              for i in range(3)]
+                    rep = bytes([1]) + b"".join(
+                        struct.pack("<H", campos[i]) for i in args.ordem)
+                    uhid_input(uhid_eixos, rep)
+                    n_eixos += 1
+
+            if uhid_eixos and uhid_eixos in r:
+                os.read(uhid_eixos, EV_BUF)   # o app so le; nada a fazer
 
             if uhid in r:                        # app -> pedal
                 buf = os.read(uhid, EV_BUF)
@@ -233,14 +293,17 @@ def sessao(args, dev_real, sysfs):
                 elif tipo == UHID_STOP:
                     break
     finally:
-        try:
-            os.write(uhid, struct.pack("<I", UHID_DESTROY))
-        except OSError:
-            pass
-        os.close(uhid)
+        for fd in (uhid, uhid_eixos):
+            if fd is None:
+                continue
+            try:
+                os.write(fd, struct.pack("<I", UHID_DESTROY))
+            except OSError:
+                pass
+            os.close(fd)
         os.close(hidraw)
-        print("sessao encerrada: %d relatorios pedal->app, %d app->pedal"
-              % (n_in, n_out))
+        print("sessao encerrada: %d vendor pedal->app, %d app->pedal, "
+              "%d de posicao" % (n_in, n_out, n_eixos))
     return voltar and not PARAR[0]
 
 
@@ -251,10 +314,21 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="mostra cada relatorio repassado")
+    ap.add_argument("--sem-eixos", dest="eixos", action="store_false",
+                    help="nao criar o joystick virtual de eixos permutados")
+    ap.add_argument("--ordem", default=",".join(str(i) for i in ORDEM_PADRAO),
+                    help="quais campos reais alimentam lX,lY,lZ (padrao %s)"
+                         % ",".join(str(i) for i in ORDEM_PADRAO))
     ap.add_argument("--esperar", action="store_true",
                     help="se os pedais nao estiverem ligados, espera em vez "
                          "de sair (util para subir junto com o app)")
     args = ap.parse_args()
+    try:
+        args.ordem = tuple(int(x) for x in args.ordem.split(","))
+        if sorted(args.ordem) != [0, 1, 2]:
+            raise ValueError
+    except ValueError:
+        sys.exit("--ordem precisa ser uma permutacao de 0,1,2 (ex.: 2,0,1)")
 
     def encerrar(*_):
         PARAR[0] = True
