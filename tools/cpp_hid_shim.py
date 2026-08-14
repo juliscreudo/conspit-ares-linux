@@ -31,6 +31,10 @@ escrita e' o dos pedais.
 
     tools/cpp_hid_shim.py           # roda ate Ctrl-C
     tools/cpp_hid_shim.py -v        # mostra cada relatorio repassado
+    tools/cpp_hid_shim.py --esperar # espera os pedais aparecerem
+
+Sobrevive a replug: se o pedal sumir, ele derruba o device virtual, espera
+o hidraw voltar e recria sozinho.
 
 Requer /dev/uhid acessivel: sudo cp udev/70-uhid-shim.rules /etc/udev/rules.d/
 """
@@ -43,6 +47,7 @@ import select
 import signal
 import struct
 import sys
+import time
 
 VID, PID = 0x3514, 0x0005
 BUS_USB = 0x03
@@ -128,17 +133,9 @@ def uhid_input(fd, dados):
     os.write(fd, struct.pack("<IH", UHID_INPUT2, len(dados)) + dados)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("-v", "--verbose", action="store_true",
-                    help="mostra cada relatorio repassado")
-    args = ap.parse_args()
-
-    dev_real, sysfs = achar_hidraw_real()
-    if not dev_real:
-        sys.exit("pedais CPP.LITE (%04x:%04x) nao encontrados. "
-                 "Confira: lsusb | grep -i 3514" % (VID, PID))
-
+def sessao(args, dev_real, sysfs):
+    """Uma sessao com o device real. Devolve True se deve tentar de novo
+    (pedal sumiu), False se foi pedido para encerrar."""
     with open(os.path.join(sysfs, "device", "report_descriptor"), "rb") as f:
         rd = f.read()
     fatias = fatiar_collections(rd)
@@ -169,17 +166,10 @@ def main():
     uhid_criar(uhid, rd_vendor, "CONSPIT CPP.LITE")
     print("device virtual criado. Ctrl-C para remover.\n")
 
-    parar = False
-
-    def encerrar(*_):
-        nonlocal parar
-        parar = True
-    signal.signal(signal.SIGINT, encerrar)
-    signal.signal(signal.SIGTERM, encerrar)
-
     n_in = n_out = 0
+    voltar = False
     try:
-        while not parar:
+        while not PARAR[0]:
             r, _, _ = select.select([hidraw, uhid], [], [], 0.5)
 
             if hidraw in r:                      # pedal -> app
@@ -189,7 +179,10 @@ def main():
                     if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                         dados = b""
                     else:
-                        print("pedal desconectado (%s)" % e.strerror)
+                        # EIO tipico de replug: o device sumiu debaixo de nos
+                        print("pedal desconectado (%s) -- aguardando voltar"
+                              % e.strerror)
+                        voltar = True
                         break
                 if dados and (not ids or dados[0] in ids):
                     uhid_input(uhid, dados)
@@ -246,8 +239,42 @@ def main():
             pass
         os.close(uhid)
         os.close(hidraw)
-        print("\nencerrado. %d relatorios pedal->app, %d app->pedal"
+        print("sessao encerrada: %d relatorios pedal->app, %d app->pedal"
               % (n_in, n_out))
+    return voltar and not PARAR[0]
+
+
+PARAR = [False]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("-v", "--verbose", action="store_true",
+                    help="mostra cada relatorio repassado")
+    ap.add_argument("--esperar", action="store_true",
+                    help="se os pedais nao estiverem ligados, espera em vez "
+                         "de sair (util para subir junto com o app)")
+    args = ap.parse_args()
+
+    def encerrar(*_):
+        PARAR[0] = True
+    signal.signal(signal.SIGINT, encerrar)
+    signal.signal(signal.SIGTERM, encerrar)
+
+    primeira = True
+    while not PARAR[0]:
+        dev_real, sysfs = achar_hidraw_real()
+        if not dev_real:
+            if primeira and not args.esperar:
+                sys.exit("pedais CPP.LITE (%04x:%04x) nao encontrados. "
+                         "Confira: lsusb | grep -i 3514" % (VID, PID))
+            # replug: o hidrawN novo pode demorar a aparecer
+            time.sleep(2)
+            continue
+        primeira = False
+        if not sessao(args, dev_real, sysfs):
+            break
+    print("encerrado.")
 
 
 if __name__ == "__main__":

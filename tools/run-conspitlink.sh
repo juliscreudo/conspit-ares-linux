@@ -43,7 +43,7 @@ if lsusb 2>/dev/null | grep -qi '3514:0005'; then
   if pgrep -f 'cpp_hid_sh[i]m' >/dev/null; then
     echo "shim dos pedais: ja estava rodando"
   elif [[ -w /dev/uhid ]]; then
-    python3 -u "$repo/tools/cpp_hid_shim.py" >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
+    python3 -u "$repo/tools/cpp_hid_shim.py" --esperar >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
     shim_pid=$!
     sleep 2
     if kill -0 "$shim_pid" 2>/dev/null; then

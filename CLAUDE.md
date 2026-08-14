@@ -495,8 +495,11 @@ documentado em `docs/protocolo-cpp-lite.md`. Nada a ver com o protocolo OpenFFBo
 ### Cuidado ao matar processos
 
 `pkill -f <padrão>` casa também com **a própria linha de comando do shell** que roda o
-`pkill`, e mata a si mesmo (aconteceu duas vezes em 2026-08-14). Use o truque do colchete:
-`pkill -f 'cpp_hid_sh[i]m'`. E `winedevice.exe` órfão às vezes sobrevive a `wineserver -k`,
+`pkill`, e mata a si mesmo (aconteceu três vezes em 2026-08-14). O truque do colchete
+(`pkill -f 'cpp_hid_sh[i]m'`) **não basta** se o nome literal aparecer em qualquer outro
+ponto do mesmo comando — foi o que aconteceu na terceira vez. O que funciona sempre é matar
+pelo PID: `pid=$(pgrep -f 'cpp_hid_shim\.py' | grep -v "^$$\$")`, ou guardar o `$!` na hora
+de subir (é o que o `run-conspitlink.sh` faz). E `winedevice.exe` órfão às vezes sobrevive a `wineserver -k`,
 inclusive `-k9`: aí é `kill -9` por PID, senão os processos velhos continuam segurando os
 `hidraw` e a medição seguinte sai errada.
 
