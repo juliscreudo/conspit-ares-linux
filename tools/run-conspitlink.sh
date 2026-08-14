@@ -39,8 +39,27 @@ fi
 # "Pedais CPP.LITE" no CLAUDE.md). Sobe junto e cai junto; se os pedais nao
 # estiverem ligados, nao faz nada.
 shim_pid=""
+
+# "Ja tem shim rodando?" e' verificado pelo ESTADO (existe device HID
+# virtual com o VID/PID dos pedais?), nao por pgrep. `pgrep -f` casa com
+# qualquer linha de comando que MENCIONE o nome -- inclusive a do shell que
+# esta rodando o proprio pgrep, um editor com o arquivo aberto, ou um grep.
+# Ja deu falso positivo aqui.
+shim_ativo() {
+  local h
+  for h in /sys/class/hidraw/hidraw*; do
+    [[ -e "$h/device/modalias" ]] || continue
+    case "$(readlink -f "$h/device")" in
+      */devices/virtual/*) ;;
+      *) continue ;;
+    esac
+    grep -qi 'v00003514p00000005' "$h/device/modalias" && return 0
+  done
+  return 1
+}
+
 if lsusb 2>/dev/null | grep -qi '3514:0005'; then
-  if pgrep -f 'cpp_hid_sh[i]m' >/dev/null; then
+  if shim_ativo; then
     echo "shim dos pedais: ja estava rodando"
   elif [[ -w /dev/uhid ]]; then
     python3 -u "$repo/tools/cpp_hid_shim.py" --esperar >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
