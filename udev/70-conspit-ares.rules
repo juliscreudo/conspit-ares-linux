@@ -36,9 +36,14 @@
 # curso, o que serrilha o esterco; flat=4095 declara uma zona morta de
 # ~12.5% em volta do centro. Ambos precisam ir a zero.
 #
-# Depende de `evdev-joystick`, do pacote linuxconsoletools:
-#   sudo dnf install linuxconsoletools
-# Confirme o caminho com `rpm -ql linuxconsoletools | grep evdev` e ajuste.
+# Depende do binario `evdev-joystick`:
+#   Fedora          sudo dnf install linuxconsoletools
+#   Arch/CachyOS    sudo pacman -S linuxconsole
+#
+# O RUN+ abaixo usa caminho ABSOLUTO porque o udev nao tem PATH utilizavel.
+# Se na sua distro o binario nao estiver em /usr/bin, ajuste a linha:
+#   command -v evdev-joystick
+# `tools/check-setup.sh` verifica isso e avisa.
 #
 # Conferir depois (fuzz e flat devem estar zerados):
 #   python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick

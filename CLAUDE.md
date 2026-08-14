@@ -126,7 +126,8 @@ lsusb -v -d VID:PID                    # interfaces e endpoints (HID? CDC?)
    `/dev/serial/by-id/usb-CONSPIT_CONSPIT_ARES_<serial>-if00` — **não versionar**, é dado de
    garantia. Resolva sempre por glob nas ferramentas e nos exemplos.
 2. **CDC serial: sim.** Composite device (IAD): if00/if01 CDC-ACM → `/dev/ttyACM2`,
-   if02 HID. O usuário já está no grupo `dialout`, sem regra udev extra.
+   if02 HID. Basta o usuário estar no grupo dono do device — que **varia por distro**
+   (`dialout` no Fedora, `uucp` no Arch); detectar com `stat -c '%G' /dev/ttyACM*`.
 3. **Joystick com FFB: sim.** `/dev/input/js0` + evdev, com 40 slots de efeito
    simultâneos e todos os condicionais (spring, damper, inertia, friction, constant,
    ramp, periódicos). O kernel carregou `hid-pidff` sozinho via `hid-generic`.
@@ -344,6 +345,36 @@ já ter passado: o builtin nunca dispara e o hidraw continua root-only — **em 
 erro nenhum**. Confirmado empiricamente: com `99-`, a correção de deadzone funcionou
 (`RUN+` roda no fim de qualquer jeito) mas o `uaccess` não. Por isso o arquivo é
 `70-conspit-ares.rules`.
+
+## Portabilidade entre distros (2026-08-14)
+
+O ambiente de desenvolvimento é **Fedora 44** (máquina de lab); a máquina do simulador é
+**CachyOS (Arch)**. Tudo foi revisado para ser replicável nas duas. O que de fato varia:
+
+| ponto | Fedora | Arch / CachyOS |
+|---|---|---|
+| pacote do `evdev-joystick` | `linuxconsoletools` | `linuxconsole` |
+| pyserial | `python3-pyserial` | `python-pyserial` (⚠️ `pip install` barrado pelo PEP 668) |
+| **grupo dono de `/dev/ttyACM*`** | `dialout` | `uucp` |
+| Wine | `wine` | `wine`, exige repo **multilib** |
+
+⚠️ **O grupo da serial é a armadilha silenciosa.** Ele vem de
+`/usr/lib/udev/rules.d/50-udev-default.rules`, que cada distro patcheia. Documentação e
+scripts **detectam** com `stat -c '%G' /dev/ttyACM*` em vez de assumir — nunca voltar a
+escrever `dialout` fixo.
+
+O que **não** varia e foi confirmado: a regra udev, o `TAG="uaccess"` aplicado em
+`73-seat-late.rules` (daí o prefixo `70-` obrigatório), o caminho `/usr/bin/evdev-joystick`,
+e todo o lado Wine.
+
+`tools/check-setup.sh` verifica o ambiente inteiro sem assumir gerenciador de pacotes, e
+imprime a correção ao lado de cada falha. Ele roda com a base desligada (pula só os testes
+de hardware) — feito assim de propósito, porque numa máquina nova a verificação vem antes
+de plugar. **Atualizar esse script sempre que um pré-requisito novo entrar.**
+
+⚠️ Os comandos de Arch/CachyOS ainda **não foram executados no hardware** — foram escritos
+a partir do mecanismo, não de teste. Ao validar na máquina do simulador, corrigir aqui e no
+README o que divergir.
 
 ## Escopo e disclaimers (a herdar do projeto do pedal)
 - Foco **sim racing**. Um único setup: o do autor.

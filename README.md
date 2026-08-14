@@ -3,7 +3,11 @@
 Ferramentas e passo a passo para usar a base **Conspit Ares Platinum 20 Nm** no Linux,
 incluindo o **ConspitLink 2.0 rodando sob Wine** com controle da base em tempo real.
 
-Validado em **Fedora 44**, kernel 6.x, Wine 11.14, com o hardware ligado (2026-08-12).
+**Validado com o hardware ligado em Fedora 44** (kernel 7.1, Wine 11.14), em 2026-08-12.
+As instruções são escritas para funcionar em qualquer distro com systemd — os comandos de
+Arch/CachyOS estão indicados, mas **ainda não foram executados no hardware**. Se algo
+divergir por lá, `tools/check-setup.sh` aponta o quê.
+
 Projeto pessoal, sem garantia nem suporte. Firmware, hardware e o projeto OpenFFBoard são
 de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 
@@ -27,29 +31,63 @@ protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/p
 ## Pré-requisitos
 
 ```bash
-sudo dnf install -y linuxconsoletools python3 git
-python3 -c "import serial" || pip install --user pyserial
-```
-
-Wine (o projeto foi validado com o `wine-devel` 11.14 em `/opt/wine-devel`; o `wine` dos
-repositórios também deve servir):
-
-```bash
-wine --version
-```
-
-Seu usuário precisa estar no grupo **`dialout`** (acesso à porta serial):
-
-```bash
-groups | grep -q dialout || { sudo usermod -aG dialout "$USER"; echo "faça logout/login"; }
-```
-
-Clone:
-
-```bash
-git clone <este-repo> ~/apps/conspit-ares-linux
+git clone git@github.com:juliscreudo/conspit-ares-linux.git ~/apps/conspit-ares-linux
 cd ~/apps/conspit-ares-linux
 ```
+
+### Pacotes
+
+Nada aqui depende de distro; só os nomes dos pacotes mudam.
+
+| o que | Fedora | Arch / CachyOS |
+|---|---|---|
+| `evdev-joystick` (zera fuzz/deadzone) | `linuxconsoletools` | `linuxconsole` |
+| pyserial | `python3-pyserial` | `python-pyserial` |
+| Wine (só p/ o ConspitLink) | `wine` | `wine` — precisa do repo **multilib** habilitado |
+
+```bash
+# Fedora
+sudo dnf install -y linuxconsoletools python3-pyserial python3 git wine
+
+# Arch / CachyOS
+sudo pacman -S --needed linuxconsole python-pyserial python git wine
+```
+
+Se algum nome não bater na sua distro, descubra pelo arquivo em vez de adivinhar:
+
+```bash
+pacman -F evdev-joystick          # Arch (precisa de 'pacman -Fy' uma vez)
+dnf provides '*/evdev-joystick'   # Fedora
+```
+
+> ⚠️ No Arch, **não** use `pip install pyserial`: o PEP 668 bloqueia instalação global e o
+> pacote da distro é o caminho certo.
+
+### Acesso à porta serial
+
+O grupo dono de `/dev/ttyACM*` **muda entre distros** — é `dialout` no Fedora e `uucp` no
+Arch. Não chute; detecte:
+
+```bash
+# com a base ligada
+grupo=$(stat -c '%G' /dev/ttyACM*)
+echo "grupo do device: $grupo"
+id -nG | tr ' ' '\n' | grep -qx "$grupo" || sudo usermod -aG "$grupo" "$USER"
+```
+
+Depois de `usermod` é **obrigatório fazer logout/login** — grupo novo não vale na sessão
+atual.
+
+### Verificação
+
+Este script confere tudo o que este README pede e diz o que falta, com a correção ao lado:
+
+```bash
+tools/check-setup.sh
+```
+
+Rode antes de começar, e de novo ao final. Ele funciona com a base desligada (pula só os
+testes de hardware).
 
 ---
 
@@ -165,6 +203,7 @@ número interessar, ele está disponível nativamente (`axis.0.pos?` pela serial
 
 | arquivo | o que faz |
 |---|---|
+| `tools/check-setup.sh` | verifica o ambiente inteiro e diz o que falta corrigir |
 | `tools/probe_serial.py` | sonda **somente leitura** da CDC (só `?` e `!`, nunca `=`) |
 | `tools/evdev_info.py` | eixos com fuzz/flat e capacidades de FFB, sem disparar efeito |
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
