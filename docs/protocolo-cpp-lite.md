@@ -1,7 +1,10 @@
 # Protocolo que o ConspitLink fala com os pedais CPP.LITE
 
-Capturado no hardware em 2026-08-14, com o `tools/cpp_hid_shim.py -v` no meio do caminho.
-Não é engenharia reversa de binário: é o tráfego real entre o app e a pedaleira.
+Capturado no hardware em 2026-08-14, com um shim de HID no meio do caminho (ferramenta desde
+então aposentada — ver "O backend do winebus" no CLAUDE.md). Não é engenharia reversa de
+binário: é o tráfego real entre o app e a pedaleira.
+
+Hoje esse canal é acessível **nativamente**, sem Wine e sem o app: `tools/cpp_pedal.py`.
 
 **É um protocolo diferente do da base.** A Ares fala o protocolo texto do OpenFFBoard
 (`cls.inst.cmd?`, ver [protocolo-conspitlink.md](protocolo-conspitlink.md)); os pedais falam
@@ -18,8 +21,10 @@ Canal HID vendor, **não** serial — os pedais não expõem CDC.
 | tamanho | 64 bytes (1 de report ID + 63 de payload) |
 | formato | ASCII, terminado em `\0`, resto do buffer zerado |
 
-⚠️ Essa segunda collection **não existe sob Wine sem o shim** — ver a seção "Pedais CPP.LITE"
-no CLAUDE.md. É por isso que o app não achava os pedais.
+⚠️ **Histórico:** essa segunda collection não aparecia sob Wine enquanto o `winebus` estava
+no backend SDL, e por isso o app não achava os pedais. Resolvido em 2026-08-15 pondo o
+`winebus` no backend hidraw — ver "O backend do winebus" no CLAUDE.md. Não é mais preciso
+nenhum intermediário.
 
 ## Handshake de conexão
 
@@ -67,9 +72,9 @@ isso leva a concluir que o pedal está "pisado em repouso" quando não está.
 
 ## O que ainda não foi mapeado
 
-- **Comandos de escrita.** A captura acima é só o handshake de leitura. Mexer em curva,
-  vibração ou calibração na GUI gera comandos que ainda não foram capturados — rode o shim
-  com `-v` enquanto mexe, e o tráfego aparece.
+- **Comandos de escrita.** A captura acima é só o handshake de leitura. Os de calibração
+  foram capturados (`$setvaluex0`/`$setvaluex1`, ver `tools/cpp_pedal.py`); os de curva e
+  vibração ainda não. Sem o shim, a captura agora é por `usbmon` (ver CLAUDE.md).
 - **Semântica do `gselect`** (`gse16` = pedal 1, valor 6?) e o formato exato do `gdline`.
 - **Haptics em jogo.** O `Vibration Mode` tem `Customize`, `SimHub` e `iRacing`. No
   `Customize` o próprio ConspitLink alimenta o efeito a partir da telemetria dele; os outros
@@ -82,3 +87,31 @@ Com o shim no ar, o app **detecta firmware novo e oferece atualizar**. Não foi 
 recomendado por aqui: um flash interrompido no meio do caminho, com um canal HID
 intermediado por um shim de terceiros, é risco desnecessário. Se for atualizar, faça pelo
 Windows.
+
+## Calibração vs. curva — dois ajustes diferentes (2026-08-15)
+
+Confundi os dois numa análise anterior; vale registrar a distinção.
+
+| ajuste | comando | é legível? |
+|---|---|---|
+| **min/max** de cada eixo | `$setvaluex0` / `$setvaluex1` | **não** — nenhuma das 12 consultas o devolve |
+| **curva** (Pedal Curve Mapping) | `$gdlinex` e afins | sim |
+
+Ou seja: `xgdl00255075100` (linear) **não** é sinal de calibração perdida — é só a curva
+linear, que é o padrão. O que de fato havia sido perdido era o **min/max**, e a evidência
+disso era o eixo, não o protocolo: `ABS_RX` marcava **4095 com o pedal solto**.
+
+**Resolvido em 2026-08-15**, calibrando pela GUI do ConspitLink: o acelerador voltou a
+marcar `0` em repouso e o gráfico do app ficou idêntico ao do Windows. O mesmo pode ser
+feito sem o app com `tools/cpp_pedal.py calibrar acelerador min|max`.
+
+⚠️ **Diagnostique min/max pelo eixo, não pelo `$gdline`.** Pedal solto deve marcar perto de
+0 e no batente perto de 4095:
+
+```bash
+python3 tools/cpp_pedal.py monitorar
+```
+
+**Lição que continua valendo:** não existe `salvar`/`restaurar` desses valores, e o min/max
+sequer é legível — uma ferramenta que escreva na pedaleira não tem como fazer backup do que
+mais importa.

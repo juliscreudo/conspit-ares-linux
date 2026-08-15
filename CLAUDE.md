@@ -16,6 +16,8 @@ conectar à base, como no Windows". **Mas o resultado preferível pode ser não 
 
 ## Hardware / contexto
 - Base: **Conspit Ares Platinum, 20 Nm**.
+- Bancada completa (VID `3514`): base `0301` + 2º MCU `0300` (hub interno da base),
+  pedais **CPP.LITE** `0005`, volante **H.AO** `0007`. Todos atendidos pelo mesmo app.
 - Por baixo: firmware **OpenFFBoard** (https://github.com/Ultrawipf/OpenFFBoard,
   https://hackaday.io/project/163904-open-ffboard) + controladora de motor **ODrive**.
 - Software oficial do fabricante: **ConspitLink** (proprietário, Windows), usado para
@@ -167,7 +169,8 @@ descritor de 87 bytes, **sem PID/FFB e sem botões declarados**: só arrays vend
 Descritor com `bNumConfigurations` = 64 (o kernel corta em 8), o que é um descritor
 malformado. **Ainda não identificado** — precisa saber do usuário qual periférico é.
 Detalhe relacionado: `main.0.btntypes?` = `32` (bit 5) indica uma fonte de botões ativa que
-`main.0.lsbtn?` não enumera; pode ser o volante/rim via CAN.
+`main.0.lsbtn?` não enumera; pode ser o volante/rim via CAN. **Não é o H.AO** — este entra
+como device USB próprio (`3514:0007`), não pela base.
 
 ### O configurador OpenFFBoard oficial — validado, mas REMOVIDO do repo
 
@@ -207,12 +210,12 @@ o plano B se o ConspitLink quebrar (atualização de firmware, de Wine ou do pr�
 | `tools/evdev_info.py` | eixos com fuzz/flat + capacidades de FFB, sem disparar efeito |
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
-| `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
-| `tools/cpp_hid_shim.py` | expõe a 2ª collection HID dos pedais (o app não os vê sem isso) |
+| `tools/cpp_pedal.py` | lê e calibra os pedais CPP.LITE **nativamente**, sem Wine |
+| `tools/conspit_wine_setup.py` | nó PnP da serial **e** backend hidraw do winebus |
 | `tools/hidenum.c` | enumera HID **de dentro do prefixo**: o que um app Windows enxerga |
+| `tools/dinput_axes.c` | mede o mapeamento de eixos do DirectInput dentro do prefixo |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw (precisa de `sudo`) |
-| `udev/70-uhid-shim.rules` | dá acesso a `/dev/uhid` para o shim (ler o cabeçalho antes) |
 
 ⚠️ **Segurança:** é uma base de 20 Nm. As ferramentas acima são deliberadamente somente de
 leitura. Não mandar `=`, `sys.0.save`, `sys.0.format`, `odrv.*` de calibração ou carregar
@@ -285,8 +288,8 @@ GUI pelo usuário em 2026-08-12:
 - ✅ Escrita em tempo real: mudar Max Force (1 N·m ↔ 20 N·m) reflete na base na hora;
   Power On/Off alterna o `Force State`.
 - ✅ Presets, seleção de jogo e `High Torque Mode` operando.
-- ❌ **Única pendência: a leitura de ângulo do volante fica em `+0.00°`** e não acompanha
-  o movimento do eixo. Ver "O ângulo travado" abaixo.
+- ❌ ~~a leitura de ângulo do volante fica em `+0.00°`~~ — **resolvido em 2026-08-15** pelo
+  backend hidraw do winebus; ver "O backend do winebus" adiante.
 
 Dois canais são usados ao mesmo tempo, e ambos precisam estar liberados:
 
@@ -305,9 +308,17 @@ errada. Nunca fixar `hidraw2`/`event21` em lugar nenhum — resolver sempre pelo
 com zeros à esquerda de largura variável) ou por `/dev/input/by-id/`. É o que
 `tools/hid_watch.py` faz.
 
-### O ângulo travado em +0.00° — o que já foi ELIMINADO (2026-08-12)
+### O ângulo travado em +0.00° — RESOLVIDO em 2026-08-15 (registro histórico)
 
-Cadeia de eliminação, toda com medição. **Nenhuma camada abaixo do app tem defeito:**
+> ⚠️ **A conclusão desta seção estava errada, e vale entender por quê.** A cadeia abaixo é
+> boa e as medições são válidas — mas ela *pressupunha* que o device HID que o app via era o
+> device real. Não era: o Wine entregava um device sintetizado pelo SDL, **sem a collection
+> vendor**. A linha do `DisableInput` foi escrita na chave errada e nunca surtiu efeito, o
+> que fechou prematuramente justamente a hipótese certa. Corrigido o backend, o ângulo
+> passou a funcionar. Lição: **antes de concluir "é bug do app", confirme o que o app
+> enxerga** — `tools/hidenum.c` responde isso em segundos.
+
+Cadeia de eliminação original, toda com medição:
 
 | hipótese | teste | resultado |
 |---|---|---|
@@ -320,16 +331,17 @@ Cadeia de eliminação, toda com medição. **Nenhuma camada abaixo do app tem d
 | app não lê o eixo | `WINEDEBUG=+dinput` | **1534 `GetDeviceState`** em 20 s, `DIJOYSTATE2` |
 | ângulo vem pela serial | lista completa de comandos do app | **nenhum comando de posição existe** |
 
-**Conclusão: o defeito está dentro da lógica do ConspitLink** (`AresApexManger::Base_Angle`),
-não no Linux, não no Wine, não no hardware. O app lê o `DIJOYSTATE2` corretamente e mesmo
-assim exibe 0.00.
+**Conclusão da época (errada):** o defeito estaria dentro da lógica do ConspitLink
+(`AresApexManger::Base_Angle`). **Conclusão real:** o app lia o `DIJOYSTATE2` de um device
+sintético, e o canal por onde o firmware manda a posição não existia no prefixo.
 
-⚠️ **Não retentar** o caminho do `DisableInput`/duplicata de device nem o de calibração de
-centro — ambos medidos e descartados. O que ainda não foi feito: desmontar
-`AresApexManger::Base_Angle` no binário (os símbolos do `.pdb` dão o endereço).
+O que faltava testar, e que ninguém tinha olhado: **o que o app enxerga**, com
+`tools/hidenum.c`. As duas linhas do trace que teriam entregado o caso de imediato:
 
-**Impacto real: nenhum.** O ângulo é indicador de tela; não participa do FFB nem da
-configuração. Range, torque, filtros e presets funcionam.
+```
+WINEDEBUG=+hid   ->  ignoring hidraw device 3514:0301 with usages 0001:0004
+                     creating non-hidraw device 3514:0301 with usages 0001:0004
+```
 
 Se algum dia só o número interessar, ele está disponível nativamente: `axis.0.pos?` /
 `axis.0.curpos?` pela serial, ou os bytes 18–19 do report ID 1. O protocolo completo que o
@@ -425,185 +437,199 @@ deixa **uma única chave `ATTRS` por linha**. A regra da base não sofre disso p
 regras de outros devices da marca. Foi exatamente o bug que o `check-setup.sh` tinha — ele
 lia `99-conspit-cpp.rules` (pedais) como se fosse a da Ares e mandava `sudo rm` nela.
 
-## Os pedais CPP.LITE sob Wine — resolvido com shim de uhid (2026-08-14)
+## O backend do winebus — a descoberta que reorganizou o projeto (2026-08-15)
 
-**Sintoma:** o ConspitLink não listava os pedais (sem card, sem item na sidebar), embora eles
-funcionassem perfeitamente no Linux nativo, inclusive em jogos.
+**Uma linha de registro na chave certa substituiu 492 linhas de shim, uma concessão de
+segurança e três "pendências do app".** Esta seção substitui toda a saga do
+`cpp_hid_shim.py` (2026-08-14), que está preservada nos commits `ec0ad06`..`1e29b84` caso
+alguém precise do código.
 
-### A causa, medida
+### A causa raiz: o projeto escrevia numa chave que o driver nunca lê
 
-O descritor do CPP.LITE tem **duas top-level collections** (a de joystick, com os 3 eixos, e
-uma vendor de 63 bytes). O Windows cria **um device HID por collection** (`&Col01`, `&Col02`)
-e o app abre o segundo. O Wine cria **um device só e expõe apenas a primeira**.
+O `winebus.sys` traz o comentário de documentação do próprio Wine, em `check_bus_option`:
 
-Isso não é dedução: `tools/hidenum.c`, compilado com mingw e rodado dentro do prefixo,
-mostra o que qualquer app Windows enxerga. Antes do shim:
-
-```
-VID_3514 PID_0005  usage_page 0x0001 usage 0x04  in 7   out 9   "CONSPIT CPP.LITE"
-VID_3514 PID_0300  usage_page 0x000C usage 0x01  in 64  out 64  "CONSPIT"
-VID_3514 PID_0301  usage_page 0x0001 usage 0x04  in 28  out 18  "CONSPIT ARES"
+```c
+/* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */
 ```
 
-`in 7` = `1 + 3×2`: só os três eixos. O canal de 64 bytes dos pedais — mesmo formato do
-`0300`, que aparece normalmente — simplesmente não existe no prefixo. Se o Wine tivesse
-mesclado as duas collections num device, `in` seria 64; ele descartou a segunda.
+Ele lê as opções **direto em `Services\winebus`**. Até 2026-08-15 este projeto escrevia em
+`Services\winebus\`**`Parameters`** — uma subchave que o driver nunca consulta. Todas as
+opções eram ignoradas **em silêncio**, e o backend continuava no SDL.
 
-⚠️ **Não confundir os dois caminhos.** O pedal funcionar em jogo (Le Mans Ultimate etc.) usa
-o caminho **nativo** (evdev, 3 eixos); o ConspitLink usa o canal **HID vendor** dentro do
-Wine. Mesmo cabo USB, dois canais independentes — um funcionar não diz nada sobre o outro.
+Isso invalidou quatro conclusões que estavam registradas aqui como "medidas":
 
-### A solução
-
-`tools/cpp_hid_shim.py` cria, via `/dev/uhid`, um device HID virtual com o mesmo `3514:0005`
-contendo **só a segunda collection**, e repassa relatórios nos dois sentidos entre ele e o
-`/dev/hidraw` real. Depois dele o enumerador mostra a linha que faltava:
-
-```
-VID_3514 PID_0005  usage_page 0x0001 usage 0x3A  in 64 out 64  "CONSPIT CPP.LITE"
-```
-
-E o app passa a: listar `CPP LITE` como **Online** no lugar do CPP EVO, ler o firmware
-(`v2.2.0`), mostrar as abas Calibration/Vibration/Launch Control, acionar o haptic pelo botão
-`Test`, e até detectar firmware novo e oferecer atualização (**não atualizar por aqui** — ver
-`docs/protocolo-cpp-lite.md`). O `run-conspitlink.sh` sobe e derruba o shim junto com o app.
-
-O protocolo desse canal é **outro**, com prefixo `$` (`$version`, `$gdlinex`, `$getPWM1`),
-documentado em `docs/protocolo-cpp-lite.md`. Nada a ver com o protocolo OpenFFBoard da base.
-
-### Detalhes que não são óbvios
-
-1. **A regra udev precisou de outro discriminador.** O device virtual não tem pai USB, então
-   `ATTRS{idVendor}=="3514"` não casa. A linha nova casa por
-   `ATTRS{modalias}=="hid:b*v00003514p*"`, que existe nos dois casos. Sem ela o `hidraw`
-   virtual fica root-only e o Wine não abre.
-2. **O shim tem de ignorar devices virtuais ao procurar o hidraw real** — senão, depois de
-   subir, ele acha a si mesmo. Filtra por `/devices/virtual/` no realpath.
-3. **`/dev/uhid` é root-only por padrão.** A concessão está em `udev/70-uhid-shim.rules`,
-   **arquivo separado de propósito**: é uma capacidade do sistema, não um device Conspit.
-   Decisão consciente do usuário em 2026-08-14, com o trade-off entendido — quem tem acesso
-   a `/dev/uhid` pode fabricar um teclado virtual e digitar como o usuário da sessão, o que
-   numa sessão **Wayland** contorna o isolamento de entrada do compositor (no X11 seria quase
-   irrelevante, já que XTEST já permite isso). Alternativa mais fechada, se um dia
-   interessar: grupo dedicado + shim como usuário de serviço.
-4. **A pedaleira não fala sozinha:** zero relatórios não solicitados. Todo o tráfego é
-   pergunta/resposta iniciada pelo app.
-5. ⚠️ **O shim repassa escrita.** As outras ferramentas do repo são deliberadamente
-   read-only; esta não é — ao mexer em curva/calibração na GUI, vira escrita real na
-   pedaleira. Não confundir com as sondas.
-
-### Os rótulos dos pedais saíam rotacionados — causa e correção (2026-08-14)
-
-Com o shim de vendor no ar, o app listava a pedaleira mas trocava os pedais: acelerador
-aparecia como embreagem, freio como acelerador, embreagem como freio.
-
-**Causa, medida:** o Wine **não usa o HID da pedaleira** — ele sintetiza o device a partir do
-`evdev`. A prova é o próprio `hidenum`: o device sai com `in 7 out 9 feat 33`, mas a primeira
-collection do descritor real daria 19 bytes de entrada, e a pedaleira não tem FFB nenhum
-(`out 9`/`feat 33` são relatórios que o Wine inventa). Confirmado também pelo device instance
-ID: quem passa por hidraw ganha prefixo `USB\`, quem passa pelo evdev ganha `WINEBUS\` — e os
-pedais são `WINEBUS\`.
-
-E o evdev ordena os eixos **pelo código**, não pela ordem do descritor:
-
-| pedal | usage no descritor | evdev | código | Wine entrega | Windows entregaria |
-|---|---|---|---|---|---|
-| freio | `Y` | `ABS_Y` | 1 | `lX` | `lY` |
-| embreagem | `Z` | `ABS_Z` | 2 | `lY` | `lZ` |
-| acelerador | `Rx` | `ABS_RX` | 3 | `lZ` | `lX` |
-
-O app lê `lX, lY, lZ` como acelerador, freio, embreagem — correto no Windows, onde o
-DirectInput respeita a ordem do descritor. Daí a rotação.
-
-⚠️ **Não retentar:** `EnableHidraw="3514:0005"` e `DisableInput=1` em
-`HKLM\System\CurrentControlSet\Services\winebus\Parameters` **não** mudam o backend —
-medido, o `winedevice` continua com o `event*` dos pedais aberto. (O `DisableInput` já tinha
-falhado em 12/08, por outro motivo.) Os nomes válidos de parâmetro, extraídos do
-`winebus.sys` desta versão: `EnableHidraw`, `DisableHidraw`, `DisableInput`, `DisableUdevd`,
-`Enable SDL`.
-
-**Correção:** o shim cria um **segundo** device virtual, um joystick declarando `X, Y, Z`
-nessa ordem e alimentado com os campos do relatório real na ordem do descritor
-(acelerador, freio, embreagem). Como o evdev numera `ABS_X(0) < ABS_Y(1) < ABS_Z(2)`, a
-ordem sai correta — permutação identidade, ajustável por `--ordem` se algum dia mudar. O
-device real fica escondido do DirectInput **só neste prefixo**
-(`HKCU\Software\Wine\DirectInput\Joysticks` → `"CONSPIT CPP.LITE"="disabled"`), senão o app
-poderia pegar qualquer um dos dois.
-
-Duas armadilhas que custaram tempo aqui:
-
-1. **O `event*` do device virtual nascia sem ACL** e o Wine, rodando como o usuário, o
-   ignorava **em silêncio**. A regra cobria `hidraw` por `modalias`, mas o `event*` ainda
-   casava por `ATTRS{idVendor}`, que não existe em device virtual. A linha nova casa por
-   `ATTRS{name}=="CONSPIT CPP.LITE Axis"` — e tem de ser **uma única** chave `ATTRS`, pelo
-   mesmo motivo de sempre (`name` fica no device de input, `modalias` no HID pai).
-2. **O Wine só considera devices com `ID_INPUT_JOYSTICK`** no caminho evdev; a mesma regra
-   atribui.
-
-### ⚠️ Pendência: a barra/gráfico de posição dos pedais no app está errada
-
-**Os rótulos estão certos** (acelerador no acelerador etc. — confirmado na GUI). O que
-continua errado é o **valor** que a barra mostra. Medido em 2026-08-14, com escala 1:
-
-| curso real do pedal | o app mostra |
+| o que este arquivo afirmava | o que era de verdade |
 |---|---|
-| repouso | ~6% (e MIN não zera) |
-| ~25% | ~100% |
-| acima de 25% | passa de 100% e a barra some (estouro) |
+| "`Enable SDL=0` configurado" | nunca leu; o SDL estava ativo e era quem fabricava os joysticks |
+| "`DisableInput=1` não ajudou, `event*` continua aberto" | nunca leu; o `event*` aberto era do próprio SDL |
+| "`EnableHidraw=3514:0005` não muda o backend" | nunca leu; o formato estava **certo** o tempo todo |
+| "o setup configurou o hidraw para a telemetria" | a telemetria do `0300` já vinha por hidraw **por default** (usage vendor) — o passo era um no-op |
 
-Ou seja: o app satura quando o `DIJOYSTATE2` chega perto de **16384**, e recebe até 65535.
+⚠️ **O canal de debug é `+hid`, não `+plugplay`.** As decisões de backend saem em
+`WINEDEBUG=+hid` (`bus_main_thread`); o `+plugplay` mostra só a criação dos nós PnP e **não**
+revela nada disso. Foi por olhar o canal errado (e os fds abertos do `winedevice`) que a
+medição de 14/08 concluiu errado.
 
-**O que foi tentado e NÃO resolveu:**
+### Como o winebus decide, no código (wine-11.15, `dlls/winebus.sys/main.c`)
 
-1. **Escala 2× e 4×** no Logical Maximum do device virtual (`--escala`). A ideia era fazer o
-   curso inteiro caber abaixo do ponto de saturação. Em ambos os casos a barra parou de
-   mostrar qualquer coisa. Parte dos testes foi contaminada por processos `winedevice`
-   órfãos, então o resultado **não é conclusivo** — mas não convergiu.
-2. **Semear a posição** para matar o valor fantasma. Em repouso a pedaleira transmite
-   relatórios continuamente **com valores idênticos**, o kernel suprime valor repetido, e o
-   `DIJOYSTATE2` fica no default `32767` (meio curso). O keepalive de 1 s com oscilação de
-   1 unidade gera **36 eventos ABS em 5 s no evdev do device virtual** — e mesmo assim o
-   DirectInput continua reportando `32767`. Não foi entendido por quê: o `winedevice` tem
-   `hidraw` **e** `event*` do device abertos, não há device duplicado no DirectInput, e o
-   mesmo mecanismo funcionou com um device de teste isolado.
+```c
+if (options.disable_sdl && options.disable_input) prefer_hidraw = TRUE;
+...
+UINT len = swprintf(vidpid, ARRAY_SIZE(vidpid), L"%04X:%04X", vid, pid);
+if (!wcsnicmp(tmp, vidpid, len)) prefer_hidraw = TRUE;
+```
 
-⚠️ **Dois erros de medição meus neste trecho, para não repetir:** (a) tomar o **máximo** de
-`lX` observado inclui o `32767` inicial e mascara valores menores; (b) o despejo começa com o
-valor padrão, então ler o **começo** do log mostra `32767` mesmo quando o dado real chegou —
-olhar o **fim**.
+e, no `IRP_MN_START_DEVICE`:
 
-**Onde investigar se alguém retomar:** por que o DirectInput não reflete eventos que
-comprovadamente chegam ao `evdev` do device virtual (trace `+dinput` do lado do
-`winedevice`), ou o caminho caro — desmontar no `.pdb` como o app converte o valor do eixo.
+```c
+if (!sdl_driver_init()) options.disable_input = TRUE;
+```
 
-**Impacto:** é indicador de tela, como o `NC` do ângulo da base. Não afeta FFB, não afeta os
-jogos (que leem o device real pelo caminho nativo), e não impede calibrar: os comandos `$` de
-calibração vão para a pedaleira real pelo canal vendor — verificado no log do shim.
+Três consequências que importam:
 
-### Conviver com o device virtual durante o jogo
+1. **`Enable SDL=0` desliga o evdev junto.** SDL desligado faz `sdl_driver_init()` falhar, o
+   que liga `disable_input` — e aí a primeira linha acima passa **qualquer** joystick para
+   hidraw. É a rede de segurança: um device Conspit ligado depois do setup já nasce certo,
+   sem re-rodar nada.
+2. **`EnableHidraw` é `REG_MULTI_SZ` no formato `VID:PID` de 4 dígitos hex**, comparado sem
+   case. `3514:0005` sempre esteve correto.
+3. **Não há dedup entre backends.** Cada backend cria o device e o `is_hidraw_enabled`
+   rejeita o que não bate — daí as linhas `ignoring non-hidraw device` no trace, que são
+   normais e esperadas.
 
-Os dois canais virtuais servem a coisas diferentes, e isso decide o que fazer:
+### O que muda para o app
 
-| canal | serve para | aparece nos jogos? |
+`tools/hidenum.c` dentro do prefixo, antes e depois:
+
+```
+ANTES (backend SDL)                              DEPOIS (backend hidraw)
+3514:0005 usage 0x04 in 7                        3514:0005 &Col01 usage 0x04 in 19
+                                                 3514:0005 &Col02 usage 0x3A in 64 out 64
+3514:0007 usage 0x04 in 26                       3514:0007 &Col01 usage 0x04 in 52
+                                                 3514:0007 &Col02 usage 0x3A in 64 out 64
+3514:0300 usage 0x01 in 64                       3514:0300        usage 0x01 in 64 out 64
+3514:0301 usage 0x04 in 28                       3514:0301 &mi_02 usage 0x04 in 64 out 25
+```
+
+O hidclass do Wine **separa as top-level collections em PDOs `&Col01`/`&Col02`**, exatamente
+como o Windows. O problema que motivou o shim inteiro não existe nesta versão do Wine — só
+estava desligado por política.
+
+⚠️ **A enumeração tem corrida.** Logo após `wineserver -k`, a primeira passada do `hidenum`
+pode não listar todos os devices (o udev ainda está enumerando). Medir sempre na **segunda**
+passada, com ~3 s de intervalo. Custou uma conclusão errada sobre o H.AO.
+
+### Configuração canônica (o que o `conspit_wine_setup.py` escreve)
+
+Em `HKLM\System\CurrentControlSet\Services\winebus`:
+
+| valor | tipo | papel |
 |---|---|---|
-| vendor (64 bytes) | detecção, firmware, curvas, haptics, telemetria | **não** (não é joystick, não tem nó de input) |
-| eixos (joystick) | só as barras da tela de pedais do app | sim |
+| `Enable SDL` | `REG_DWORD` `0` | rede de segurança: tudo vira hidraw, inclusive device novo |
+| `EnableHidraw` | `REG_MULTI_SZ` | lista explícita `3514:xxxx` dos devices presentes |
 
-Ou seja: **não é preciso fechar o ConspitLink para jogar.** Deixe-o aberto; o device de eixos
-é inerte, só ocupa uma linha na lista de controles. Se algum jogo se incomodar,
-`tools/run-conspitlink.sh --sem-eixos` derruba só essa parte — nada funcional se perde, as
-barras da tela é que voltam a ficar trocadas.
+Os dois juntos de propósito: o primeiro é o que funciona sem manutenção, o segundo é o que
+documenta a intenção e continua valendo se alguém religar o SDL. O script **detecta os PIDs
+no barramento** — rode de novo ao ligar um device Conspit novo.
 
-### Cuidado ao matar processos
+⚠️ `Enable SDL=0` vale para o **prefixo inteiro**. Como este prefixo só roda o ConspitLink,
+tudo bem; num prefixo de jogos, um controle sem ACL de hidraw sumiria.
 
-`pkill -f <padrão>` casa também com **a própria linha de comando do shell** que roda o
-`pkill`, e mata a si mesmo (aconteceu três vezes em 2026-08-14). O truque do colchete
-(`pkill -f 'cpp_hid_sh[i]m'`) **não basta** se o nome literal aparecer em qualquer outro
-ponto do mesmo comando — foi o que aconteceu na terceira vez. O que funciona sempre é matar
-pelo PID: `pid=$(pgrep -f 'cpp_hid_shim\.py' | grep -v "^$$\$")`, ou guardar o `$!` na hora
-de subir (é o que o `run-conspitlink.sh` faz). E `winedevice.exe` órfão às vezes sobrevive a `wineserver -k`,
-inclusive `-k9`: aí é `kill -9` por PID, senão os processos velhos continuam segurando os
-`hidraw` e a medição seguinte sai errada.
+### O que isto aposentou
+
+| removido | por quê |
+|---|---|
+| `tools/cpp_hid_shim.py` (492 linhas) | o Wine já entrega as duas collections |
+| `udev/70-uhid-shim.rules` | **a concessão de `/dev/uhid` deixou de ser necessária** |
+| joystick virtual + `--sem-eixos` | o app lê os eixos reais, na ordem do descritor |
+| `HKCU\...\DirectInput\Joysticks` = `disabled` | não há mais device duplicado a esconder |
+| `--capturar` do runner | ver "Captura de protocolo" abaixo |
+
+Ganho colateral que vale nomear: sem o shim, **nenhum device virtual aparece na lista de
+controles dos jogos**, e o escopo da mudança é por prefixo em vez de global no kernel.
+
+### Validado na GUI pelo usuário (2026-08-15)
+
+- **Base:** o ângulo do volante, que ficava travado em `+0.00°` desde 12/08, **passou a
+  acompanhar o movimento em tempo real** (`-449.31°` na tela, com o volante girado).
+- **Pedais:** telemetria idêntica à do Windows; haptics no modo `Customize` funcionando.
+- **Volante H.AO:** botões, brilho de rev lights/botões/dashboard, paddles Hall e Launch
+  Control — tudo operante no primeiro dia em que o device foi ligado, sem uma linha de código
+  específica para ele. **Os 6 paddles são todos Hall** (por isso eixos, não botões) e os 6
+  calibram de mínimo a máximo corretamente pela GUI.
+- **Calibração dos pedais pela GUI:** o acelerador foi calibrado no próprio ConspitLink e o
+  gráfico ficou **idêntico ao do Windows, fluido** — o que fecha também a antiga pendência da
+  barra saturando em ~16384.
+
+Medições de confirmação, depois da validação: `check-setup.sh` fecha com **0 falhas e 0
+avisos**; `ABS_RX` dos pedais voltou a marcar `0` em repouso (marcava `4095`, saturado); os
+sete eixos analógicos do H.AO estão com `fuzz 0 flat 0`.
+
+### O volante H.AO (`3514:0007`)
+
+Apareceu no barramento em 2026-08-15. Mesma estrutura de duas collections dos pedais
+(joystick + canal vendor de 64 bytes), firmware `V1.78`.
+
+**Não precisou de tratamento especial**, e o motivo é instrutivo: como ele **tem botões**, o
+builtin `input_id` classifica a collection de joystick sozinho — então `ID_INPUT_JOYSTICK`
+vem de graça e o `by-id` sai correto (`-event-joystick` no joystick, `-event-if00` no canal
+vendor). Os pedais precisavam de regra porque **não têm botão nenhum**, só eixos.
+
+Precisou, sim, da correção de fuzz/flat — sete eixos analógicos, todos ruins:
+
+```
+ABS_Y, ABS_Z, ABS_RUDDER      0..4095    fuzz  15  flat  255   (~6%)
+ABS_RX, ABS_RY, ABS_RZ,
+ABS_THROTTLE                  0..65535   fuzz 255  flat 4095   (~6.25%)
+```
+
+Nos paddles Hall isso é curso morto no início do acionamento — exatamente o que se compra um
+paddle Hall para não ter. Seção 4 da `udev/70-conspit.rules`.
+
+⚠️ **Não confundir com a aba `Paddles` do app**: ela grava na firmware do volante (bite
+point, engate) e vale em qualquer SO. O fuzz/flat é um filtro do **kernel Linux**, por cima,
+que nenhum ajuste no app desfaz — e como o app fala por hidraw, zerá-lo é invisível para ele
+e só beneficia os jogos.
+
+O protocolo do canal vendor do H.AO **ainda não foi mapeado**. Ele expõe também uma **CDC
+serial própria** (`/dev/ttyACM*`), descoberta em 2026-08-15 — por isso o
+`conspit_wine_setup.py` seleciona a porta da base **pelo PID**, e não "a primeira da lista":
+até então acertava só por acidente da ordem alfabética (`ARES` < `H.AO`).
+
+⚠️ **Calibração (min/max) e curva são ajustes diferentes**, e eu já os confundi uma vez. O
+min/max é gravado por `$setvaluex0`/`$setvaluex1` e **não é legível por nenhuma consulta**;
+a curva é o `$gdlinex`. Um `xgdl00255075100` (linear) é só a curva padrão, não sinal de
+calibração perdida — diagnostique min/max **pelo eixo**, com o pedal solto e no batente.
+Detalhes em `docs/protocolo-cpp-lite.md`.
+
+### Pendências que morreram junto
+
+- **Ângulo da base em `+0.00°`** — resolvido. A hipótese que faltava era esta: o app via o
+  device sintetizado pelo SDL, **sem a collection vendor** por onde o OpenFFBoard manda as
+  notificações HID. Não era defeito de `AresApexManger::Base_Angle`.
+- **Barra de posição dos pedais saturando em ~16384** — resolvida. Era o app interpretando a
+  escala sintética do SDL; com o descritor real de 12 bits o valor sai certo.
+- **Rótulos dos pedais rotacionados** — resolvida na raiz. O Wine não sintetiza mais o device
+  a partir do `evdev`, então a ordenação por código de eixo (`ABS_Y` < `ABS_Z` < `ABS_RX`)
+  deixou de existir; vale a ordem do descritor, como no Windows.
+
+⚠️ **Não reintroduzir** o shim, o joystick virtual nem o `DisableInput`. E, ao investigar
+qualquer coisa de backend HID no Wine, **começar por `WINEDEBUG=+hid`** e conferir em qual
+chave a opção está sendo escrita.
+
+### Captura de protocolo, agora
+
+O `--capturar` do runner funcionava porque o shim era um MITM. Sem ele, o app fala direto com
+`/dev/hidraw*`, e a captura passa a ser no nível USB:
+
+```bash
+sudo modprobe usbmon
+# descubra o barramento com: lsusb | grep -i 3514   (Bus 005 -> usbmon5)
+sudo cat /sys/kernel/debug/usb/usbmon/5u | grep -i ...
+```
+
+Para os pedais isso raramente é necessário: `tools/cpp_pedal.py` fala o protocolo `$`
+nativamente, sem Wine e sem app. Para mapear o canal do H.AO, o mesmo padrão deve servir.
 
 ## Portabilidade entre distros (2026-08-14)
 

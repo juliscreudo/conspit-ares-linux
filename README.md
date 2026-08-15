@@ -1,12 +1,12 @@
-# Conspit Ares Platinum 20Nm no Linux
+# Conspit no Linux — base Ares Platinum 20Nm, pedais CPP.LITE, volante H.AO
 
-Ferramentas e passo a passo para usar a base **Conspit Ares Platinum 20 Nm** no Linux,
-incluindo o **ConspitLink 2.0 rodando sob Wine** com controle da base em tempo real.
+Ferramentas e passo a passo para usar os periféricos **Conspit** no Linux, incluindo o
+**ConspitLink 2.0 rodando sob Wine** com configuração e telemetria em tempo real de todos os
+dispositivos.
 
 Validado com o hardware ligado em **Fedora 44** (2026-08-12, Wine 11.14) e em **CachyOS**
-(2026-08-14, kernel 7.1, Wine 11.15) — nos dois casos incluindo o ConspitLink sob Wine.
-Os comandos de cada distro estão indicados onde diferem. Se algo divergir na sua,
-`tools/check-setup.sh` aponta o quê.
+(2026-08-14 e 2026-08-15, kernel 7.1, Wine 11.15). Os comandos de cada distro estão
+indicados onde diferem. Se algo divergir na sua, `tools/check-setup.sh` aponta o quê.
 
 Projeto pessoal, sem garantia nem suporte. Firmware, hardware e o projeto OpenFFBoard são
 de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
@@ -16,17 +16,19 @@ de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 | | estado |
 |---|---|
 | FFB nativo em jogos (via `hid-generic` + `hid-pidff`) | ✅ 40 slots, todos os efeitos condicionais |
-| Zona morta / serrilhado dos eixos | ✅ corrigido por regra udev |
-| Pedais CPP.LITE (3 eixos, curso morto, enumeração) | ✅ mesma regra udev, via `/dev/input/conspit-cpp-lite` |
+| Zona morta / serrilhado dos eixos (base, pedais, volante) | ✅ corrigido por regra udev |
+| Pedais CPP.LITE nativos, sem Wine (ler, monitorar, calibrar) | ✅ `tools/cpp_pedal.py` |
 | Protocolo de comandos direto pela serial | ✅ documentado e testado |
 | **ConspitLink 2.0 sob Wine** | ✅ config e telemetria em tempo real |
-| Leitura de ângulo no ConspitLink | ❌ trava em `+0.00°` (cosmético — ver Limitações) |
-| **Pedais CPP.LITE no ConspitLink** | ✅ via `tools/cpp_hid_shim.py` (Online, haptics, curvas) |
+| ↳ base Ares: torque, range, filtros, presets, ângulo ao vivo | ✅ |
+| ↳ pedais CPP.LITE: curvas, calibração, haptics (`Customize`) | ✅ |
+| ↳ volante H.AO: botões, brilho, dashboard, paddles, Launch Control | ✅ |
 | Telemetria de jogo → dash dos volantes | não investigado ainda |
 
 A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
 `3514:0301`. Detalhes técnicos e histórico da investigação em [CLAUDE.md](CLAUDE.md); o
-protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md).
+protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md)
+(base) e [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md) (pedais).
 
 ---
 
@@ -88,8 +90,8 @@ Este script confere tudo o que este README pede e diz o que falta, com a correç
 tools/check-setup.sh
 ```
 
-Rode antes de começar, e de novo ao final. Ele funciona com a base desligada (pula só os
-testes de hardware).
+Rode antes de começar, e de novo ao final. Ele funciona com o hardware desligado (pula só os
+testes que dependem dele).
 
 ---
 
@@ -103,9 +105,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 É **um arquivo só para todos os dispositivos Conspit** (VID `3514`): a seção de acesso casa
-por vendor, então base, 2º MCU e pedais ficam cobertos sem uma regra por device. Se você
-tinha regras antigas (`70-conspit-ares.rules`, `99-conspit*.rules`), remova-as — esta as
-substitui. O `tools/check-setup.sh` lista o que sobrou, uma a uma.
+por vendor, então base, 2º MCU, pedais e volantes ficam cobertos sem uma regra por device —
+foi o que fez o volante H.AO funcionar no dia em que foi ligado, sem tocar no arquivo. Se
+você tinha regras antigas (`70-conspit-ares.rules`, `99-conspit*.rules`, ou a
+`70-uhid-shim.rules` de versões anteriores deste repo), remova-as. O `tools/check-setup.sh`
+lista o que sobrou, uma a uma.
 
 > ⚠️ O prefixo **`70-`** é obrigatório, e por **dois** motivos:
 >
@@ -120,28 +124,35 @@ Conferir (com o hardware ligado) — `fuzz` e `flat` devem estar zerados:
 
 ```bash
 python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick
-python3 tools/evdev_info.py /dev/input/conspit-cpp-lite    # se tiver os pedais
+python3 tools/evdev_info.py /dev/input/conspit-cpp-lite                    # pedais
+python3 tools/evdev_info.py /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick
 ```
 
-Antes da regra o eixo do volante vinha com `fuzz 255` e `flat 4095` — respectivamente um
-serrilhado no esterço e uma **zona morta de ~12,5% em volta do centro**. Os três eixos dos
-pedais CPP.LITE vinham com `fuzz 15` e `flat 255` em escala 0–4095, ou seja **~6% de curso
-morto no começo de cada pedal**.
+O que a regra corrige, medido antes dela:
+
+| device | antes | o que isso é |
+|---|---|---|
+| base, `ABS_X` | `fuzz 255`, `flat 4095` | serrilhado no esterço + **zona morta de ~12,5%** no centro |
+| pedais, 3 eixos | `fuzz 15`, `flat 255` (0–4095) | **~6% de curso morto** no começo de cada pedal |
+| volante, 7 eixos | `fuzz 15/255`, `flat 255/4095` | idem nos **paddles Hall** (embreagem, bite point) |
 
 > ⚠️ Nos pedais, **não** use `/dev/input/by-id/`. O CPP.LITE expõe duas collections HID na
 > mesma interface USB, o `by-id` acaba apontando para o canal vendor (um eixo de 0–255) e
 > não para os pedais. O symlink `/dev/input/conspit-cpp-lite`, criado pela regra, é o
-> caminho estável para os três eixos reais.
+> caminho estável para os três eixos reais. (O H.AO não sofre disso: como tem botões, o
+> `input_id` classifica a collection certa sozinho.)
 
 ## Passo 2 — Verificar o hardware
 
 ```bash
 python3 tools/probe_serial.py            # fala o protocolo OpenFFBoard (só leitura)
 python3 tools/hid_watch.py 15            # posição nos dois canais (gire o volante)
+python3 tools/cpp_pedal.py ler           # config gravada nos pedais (só leitura)
 ```
 
 `probe_serial.py` deve responder `sys.0.swver? -> 1.15.0` e listar as classes ativas
-(`main`, `sys`, `axis`, `fx`, `odrv`, `can`, `cananalog`).
+(`main`, `sys`, `axis`, `fx`, `odrv`, `can`, `cananalog`). Ele acha a porta sozinho por
+`/dev/serial/by-id/`; para forçar outra, passe o device como argumento.
 
 ---
 
@@ -158,50 +169,47 @@ wineboot -u                       # cria o prefixo isolado
 wine ConspitLink2.0.exe /S        # instalação silenciosa
 ```
 
-Registre a base na árvore de dispositivos do Wine — **sem isto o app não a enxerga**:
+Prepare o prefixo — **sem isto o app não enxerga os dispositivos**:
 
 ```bash
 python3 tools/conspit_wine_setup.py
 ```
 
-O script deve terminar com `tudo certo.` e mostrar a linha do WMI com
-`VID=3514  PID=0301`. Abra:
+O script deve terminar com `tudo certo.`. Abra:
 
 ```bash
 tools/run-conspitlink.sh
 ```
 
-### Pedais CPP.LITE (opcional)
+> ⚠️ **Rode o `conspit_wine_setup.py` de novo ao ligar um device Conspit novo.** Ele monta a
+> lista de dispositivos a partir do que está no barramento. (Na prática o device novo já
+> funciona sem isso, pela rede de segurança descrita abaixo — mas a lista é o que documenta
+> a intenção, e o `check-setup.sh` cobra.)
 
-O `run-conspitlink.sh` sobe sozinho o `tools/cpp_hid_shim.py` quando detecta os pedais. Sem
-ele o app **não lista a pedaleira** — o Wine expõe só a primeira das duas collections HID do
-CPP.LITE, e o canal por onde o app conversa é justamente a segunda. O shim precisa de acesso
-a `/dev/uhid`:
+### O que o `conspit_wine_setup.py` faz, e por quê
 
-```bash
-sudo cp udev/70-uhid-shim.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
+Duas coisas independentes:
 
-> ⚠️ Leia o cabeçalho do arquivo antes: ele concede ao usuário da sessão a capacidade de
-> criar dispositivos de entrada virtuais no kernel, o que numa sessão Wayland contorna o
-> isolamento de entrada do compositor. É uma decisão consciente, não um detalhe.
+**1. Registra a porta serial na árvore PnP do Wine.** O Wine expõe portas seriais como
+dispositivos genéricos, **sem VID/PID de USB**. O `QSerialPortInfo` do Qt (que o ConspitLink
+usa) enumera pela classe `Ports` do SetupAPI e tira o VID/PID do device instance ID — então
+sem um nó na árvore PnP a base não aparece. O script cria esse nó e mapeia a `COM33` nos dois
+lugares obrigatórios (`dosdevices/com33` e `HKLM\Software\Wine\Ports\COM33`), sempre por
+`/dev/serial/by-id/...`.
 
-Com isso o `CPP LITE` aparece Online, com Calibration, Vibration (o botão `Test` faz o haptic
-vibrar) e Launch Control. O protocolo desse canal está em
-[docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md).
+**2. Põe o `winebus` no backend hidraw.** Este é o passo que faz os pedais, o volante e a
+telemetria completa da base funcionarem. Por padrão o Wine entrega devices HID **sintetizados
+pelo SDL**, com uma collection só: os canais vendor de 64 bytes (pedais, volantes) e a
+collection de comandos da base simplesmente não existem para o app. Com o backend hidraw, o
+Wine passa o descritor real e o `hidclass` separa as collections em `&Col01`/`&Col02`,
+exatamente como o Windows.
 
-### Por que o passo do `conspit_wine_setup.py` é necessário
-
-O Wine expõe portas seriais como dispositivos genéricos, **sem VID/PID de USB**. O
-`QSerialPortInfo` do Qt (que o ConspitLink usa) enumera pela classe `Ports` do SetupAPI e
-tira o VID/PID do device instance ID — então sem um nó na árvore PnP a base não aparece.
-O script cria esse nó e mapeia a `COM33` nos dois lugares obrigatórios (`dosdevices/com33`
-e `HKLM\Software\Wine\Ports\COM33`), sempre por `/dev/serial/by-id/...`.
-
-Medido: **antes** do nó PnP o app não abria device nenhum; **depois**, ele abre a serial da
-base. Técnica herdada da seção 11.3 do projeto irmão `~/apps/diy-ffb-pedal-linux/`,
-adaptada de .NET/WMI para Qt/SetupAPI.
+> ⚠️ A chave é `HKLM\System\CurrentControlSet\Services\`**`winebus`**, **não** a subchave
+> `...\winebus\Parameters`. O `winebus.sys` documenta a chave no próprio código
+> (`/* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */`) e nunca lê a
+> subchave. Escrever no lugar errado é ignorado **em silêncio** — foi o que atrasou este
+> projeto por três dias. Se for diagnosticar backend HID no Wine, o canal é
+> `WINEDEBUG=+hid` (o `+plugplay` **não** mostra essas decisões).
 
 ---
 
@@ -223,19 +231,42 @@ Evita-se fechando o app antes de desconectar a base.
 A cada reenumeração do kernel (replug, suspend/resume) os números trocam — inclusive
 **entre a base e o segundo MCU da base**. Nunca fixe `ttyACM2`/`hidraw2`/`event21` em lugar
 nenhum. Resolva sempre por `/dev/serial/by-id/`, `/dev/input/by-id/` ou pelo VID/PID em
-`/sys/class/hidraw/*/device/uevent`. Todas as ferramentas deste repo já fazem isso.
+`/sys/class/hidraw/*/device/uevent`. Todas as ferramentas deste repo fazem isso.
 
-### O ângulo do ConspitLink fica em `+0.00°`
+### O app não lista um dispositivo que está ligado
 
-Defeito **dentro da lógica do ConspitLink**, não do Linux nem do Wine. Todas as camadas
-abaixo foram medidas e estão corretas: o kernel recebe a posição, ela está no report HID
-(report ID 1, bytes 18–19), e o `wine control joy.cpl` mostra o eixo X acompanhando o
-volante perfeitamente. O app chega a chamar `GetDeviceState` 1534×/20s e ainda assim
-exibe 0.00. A cadeia de eliminação completa está no CLAUDE.md.
+Quase sempre é uma destas duas:
 
-**Não afeta nada**: é indicador de tela, não participa do FFB nem da configuração. Se o
-número interessar, ele está disponível nativamente (`axis.0.pos?` pela serial, ou
-`tools/hid_watch.py`).
+1. **`/dev/hidraw*` sem ACL** — o backend hidraw depende disso. `tools/check-setup.sh`
+   seção 3 diz quais estão sem acesso; a correção é a regra udev do Passo 1.
+2. **`winebus` fora do backend hidraw** — seção 7 do `check-setup.sh`; a correção é
+   `python3 tools/conspit_wine_setup.py`.
+
+Para ver exatamente o que o app enxerga, compile o enumerador e rode dentro do prefixo:
+
+```bash
+x86_64-w64-mingw32-gcc tools/hidenum.c -o /tmp/hidenum.exe -lhid -lsetupapi
+WINEPREFIX="$PWD/.wine-conspitlink" wine /tmp/hidenum.exe
+```
+
+Cada device Conspit deve aparecer com suas duas collections (`usage 0x04` para o joystick,
+`usage 0x3A` para o canal vendor de 64 bytes). ⚠️ A enumeração tem corrida: logo após um
+`wineserver -k`, rode **duas vezes** com alguns segundos de intervalo.
+
+### Calibrar os pedais
+
+A calibração de **min/max** mora na pedaleira, não no PC, e **não é legível** por nenhum
+comando — diagnostique pelo eixo: pedal solto deve marcar perto de `0`, no batente perto de
+`4095`.
+
+```bash
+python3 tools/cpp_pedal.py monitorar                  # leitura crua dos três
+python3 tools/cpp_pedal.py calibrar acelerador min    # com o pedal SOLTO
+python3 tools/cpp_pedal.py calibrar acelerador max    # com o pedal no BATENTE
+```
+
+Dá para fazer o mesmo pela GUI do ConspitLink, que também expõe a *curva* (ajuste separado
+do min/max — ver [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md)).
 
 ---
 
@@ -248,13 +279,13 @@ número interessar, ele está disponível nativamente (`axis.0.pos?` pela serial
 | `tools/evdev_info.py` | eixos com fuzz/flat e capacidades de FFB, sem disparar efeito |
 | `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
 | `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
-| `tools/conspit_wine_setup.py` | registra o nó PnP que faz o ConspitLink enxergar a base |
-| `tools/cpp_hid_shim.py` | expõe a 2ª collection HID dos pedais CPP.LITE ao app |
+| `tools/cpp_pedal.py` | lê, monitora e calibra os pedais **nativamente** (⚠️ `calibrar` escreve) |
+| `tools/conspit_wine_setup.py` | nó PnP da serial + backend hidraw do winebus |
 | `tools/hidenum.c` | enumera HID de dentro do prefixo Wine (diagnóstico) |
+| `tools/dinput_axes.c` | mede o mapeamento de eixos do DirectInput no prefixo (diagnóstico) |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |
-| `udev/70-uhid-shim.rules` | acesso a `/dev/uhid` para o shim dos pedais |
 
 > ⚠️ **É uma base de 20 Nm.** As ferramentas de diagnóstico são deliberadamente somente de
 > leitura. Não mande `=`, `sys.0.save`, `sys.0.format` nem comandos de calibração do ODrive
-> sem o volante livre e as mãos fora.
+> sem o volante livre e as mãos fora. As duas exceções que escrevem estão marcadas acima.
