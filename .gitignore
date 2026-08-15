@@ -9,3 +9,6 @@ ConspitLink2.0.exe
 
 # prefixo Wine do ConspitLink (descartavel, ~500 MB)
 .wine-conspitlink/
+
+# binarios das ferramentas de diagnostico (make -C tools)
+tools/*.exe
