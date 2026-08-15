@@ -45,12 +45,54 @@ for a in "$@"; do
 done
 set -- "${args[@]+"${args[@]}"}"
 
+# PIDs do shim, lidos do /proc em vez de `pgrep -f`.
+#
+# `pgrep -f`/`pkill -f` casam com QUALQUER linha de comando que mencione o
+# nome -- inclusive a do proprio shell que roda o comando. Isso ja matou
+# este script (ver "Cuidado ao matar processos" no CLAUDE.md). Exigir que
+# argv[0] seja o python elimina a classe inteira do problema: um editor com
+# o arquivo aberto, um grep ou este script nunca casam.
+pids_do_shim() {
+  local p argv0
+  for p in /proc/[0-9]*; do
+    [[ -r "$p/cmdline" ]] || continue
+    argv0=$(tr '\0' '\n' <"$p/cmdline" 2>/dev/null | head -1)
+    [[ "${argv0##*/}" == python* ]] || continue
+    tr '\0' '\n' <"$p/cmdline" 2>/dev/null \
+      | grep -q 'cpp_hid_shim\.py$' || continue
+    echo "${p##*/}"
+  done
+}
+
+# O shim NAO e' processo do Wine: `wineserver -k` nao o alcanca. Sem isto,
+# um shim antigo sobrevive ao --limpo, o shim_ativo() logo abaixo conclui
+# "ja esta rodando" e o shim novo (com as flags que voce pediu) nunca sobe
+# -- em silencio. Foi exatamente o que aconteceu com o --capturar.
+derrubar_shim() {
+  local pids p
+  pids=$(pids_do_shim)
+  [[ -n "$pids" ]] || return 0
+  echo "derrubando shim anterior (pid $(echo $pids))..."
+  for p in $pids; do kill "$p" 2>/dev/null || true; done
+  # o shim trata SIGTERM e destroi os devices virtuais na saida
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [[ -z "$(pids_do_shim)" ]] && return 0
+    sleep 0.3
+  done
+  for p in $(pids_do_shim); do kill -9 "$p" 2>/dev/null || true; done
+  sleep 0.5
+}
+
 if [[ "${1:-}" == "--limpo" ]]; then
   echo "derrubando o Wine deste prefixo..."
   pkill -x "ConspitLink2.0." 2>/dev/null || true
   sleep 1
   wineserver -k 2>/dev/null || true
   sleep 2
+  derrubar_shim
+elif [[ "$capturar" == "1" ]]; then
+  # sem --limpo, um shim vivo continuaria mudo e a captura sairia vazia
+  derrubar_shim
 fi
 
 # Shim dos pedais CPP.LITE: sem ele o app nao enxerga a pedaleira sob Wine
