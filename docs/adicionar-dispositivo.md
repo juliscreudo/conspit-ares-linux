@@ -155,19 +155,22 @@ Mexa na GUI do ConspitLink e o tráfego aparece.
 ## Pedindo ajuda a um LLM
 
 Este repositório foi construído em conversa com um agente de IA, e a documentação foi escrita
-para isso funcionar de novo. O `CLAUDE.md` na raiz é um **relato completo da investigação** —
-inclusive dos caminhos errados e por que estavam errados.
+para isso funcionar de novo. O `CLAUDE.md` na raiz traz o estado atual e as diretivas, e o
+[historico-investigacao.md](historico-investigacao.md) é o **relato completo da
+investigação** — inclusive dos caminhos errados e por que estavam errados.
 
 Um jeito que funciona:
 
-1. Clone o repo e abra-o com um agente que leia o `CLAUDE.md` (Claude Code, por exemplo).
+1. Clone o repo e abra-o com um agente que leia o `CLAUDE.md` (Claude Code, por exemplo);
+   o histórico ele lê sob demanda quando o assunto aparecer.
 2. Rode o roteiro acima e colete as saídas.
 3. Peça a análise dando o contexto:
 
    > "Este repo suporta a base Ares Platinum, pedais CPP.LITE e volante H.AO da Conspit.
    > Tenho um `<seu produto>` (`3514:XXXX`) que `<não aparece / aparece errado / ...>`.
    > Segue a saída de `lsusb`, `parse_hid_rdesc.py`, `evdev_info.py` e `hidenum.exe`.
-   > Leia o CLAUDE.md, principalmente as seções sobre a regra udev e o backend do winebus,
+   > Leia o CLAUDE.md e o docs/historico-investigacao.md, principalmente o que trata da
+   > regra udev e do backend do winebus,
    > e diga o que ajustar."
 
 O caminho das pedras já está mapeado; o que falta é sempre o dado do **seu** hardware.

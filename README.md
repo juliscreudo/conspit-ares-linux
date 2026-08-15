@@ -57,7 +57,8 @@ ninguém fecha isto num produto proprietário.
 > diagnóstico e a matriz do que foi testado.
 
 A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
-`3514:0301`. Detalhes técnicos e histórico da investigação em [CLAUDE.md](CLAUDE.md); o
+`3514:0301`. As diretivas técnicas estão em [CLAUDE.md](CLAUDE.md) e o histórico completo
+da investigação em [docs/historico-investigacao.md](docs/historico-investigacao.md); o
 protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md)
 (base) e [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md) (pedais).
 
