@@ -6,6 +6,9 @@
 #   tools/run-conspitlink.sh --sem-eixos nao cria o joystick virtual dos
 #                                        pedais (some da lista dos jogos;
 #                                        as barras do app voltam trocadas)
+#   tools/run-conspitlink.sh --capturar  registra o trafego do canal vendor
+#                                        dos pedais em texto, nos dois
+#                                        sentidos (shim em -v)
 #
 # O `--limpo` existe porque tirar o USB com o app aberto deixa o handle da
 # porta orfao no wineserver; na proxima abertura o app reclama "The base port
@@ -30,11 +33,13 @@ app="$WINEPREFIX/drive_c/Program Files (x86)/Conspit Link 2.0"
 }
 
 sem_eixos=0
-shim_args=""
+capturar=0
+shim_args=()
 args=()
 for a in "$@"; do
   case "$a" in
-    --sem-eixos) sem_eixos=1; shim_args="--sem-eixos" ;;
+    --sem-eixos) sem_eixos=1; shim_args+=(--sem-eixos) ;;
+    --capturar)  capturar=1;  shim_args+=(-v) ;;
     *) args+=("$a") ;;
   esac
 done
@@ -93,12 +98,17 @@ if lsusb 2>/dev/null | grep -qi '3514:0005'; then
       wine reg add 'HKCU\Software\Wine\DirectInput\Joysticks' \
            /v 'CONSPIT CPP.LITE' /d disabled /f >/dev/null 2>&1 || true
     fi
-    python3 -u "$repo/tools/cpp_hid_shim.py" --esperar $shim_args \
+    python3 -u "$repo/tools/cpp_hid_shim.py" --esperar \
+            "${shim_args[@]+"${shim_args[@]}"}" \
             >"$WINEPREFIX/cpp_hid_shim.log" 2>&1 &
     shim_pid=$!
     sleep 2
     if kill -0 "$shim_pid" 2>/dev/null; then
       echo "shim dos pedais: no ar (pid $shim_pid)"
+      if [[ "$capturar" == "1" ]]; then
+        echo "capturando o canal vendor em: $WINEPREFIX/cpp_hid_shim.log"
+        echo "  (mexa na GUI; cada comando aparece como 'app->pedal <texto>')"
+      fi
     else
       echo "shim dos pedais FALHOU -- veja $WINEPREFIX/cpp_hid_shim.log" >&2
       shim_pid=""

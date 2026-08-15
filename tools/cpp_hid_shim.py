@@ -106,6 +106,25 @@ def fatiar_collections(rd):
     return fatias
 
 
+def legivel(dados):
+    """Relatorio do canal vendor como texto, para o log do -v.
+
+    O protocolo dos pedais e' ASCII terminado em NUL (ver
+    docs/protocolo-cpp-lite.md), entao hex nao ajuda ninguem a ler o
+    trafego. Mostrar o texto INTEIRO importa: e' assim que se capturam os
+    comandos de ESCRITA da GUI, e um `$dlinex00255075100` tem 18 bytes --
+    um dump truncado em 16 cortaria justamente o valor.
+    """
+    corpo = dados[1:].split(b"\x00", 1)[0]
+    try:
+        txt = corpo.decode("ascii")
+    except UnicodeDecodeError:
+        return dados.hex(" ")
+    if txt and all(32 <= ord(c) < 127 for c in txt):
+        return txt
+    return dados[:16].hex(" ")
+
+
 def report_ids(rd):
     """IDs de relatorio declarados num descritor (item 0x85)."""
     ids, i = set(), 0
@@ -324,7 +343,7 @@ def sessao(args, dev_real, sysfs):
                     uhid_input(uhid, dados)
                     n_in += 1
                     if args.verbose:
-                        print("  pedal->app  %s" % dados[:16].hex(" "))
+                        print("  pedal->app  %s" % legivel(dados))
                 elif dados and uhid_eixos and dados[0] == 1 and len(dados) >= 7:
                     # posicoes dos pedais, permutadas para o app rotular certo
                     campos = [struct.unpack_from("<H", dados, 1 + i * 2)[0]
@@ -370,7 +389,7 @@ def sessao(args, dev_real, sysfs):
                         os.write(hidraw, dados)
                         n_out += 1
                         if args.verbose:
-                            print("  app->pedal  %s" % dados[:16].hex(" "))
+                            print("  app->pedal  %s" % legivel(dados))
 
                 elif tipo == UHID_GET_REPORT:
                     rid, = struct.unpack_from("<I", buf, 4)
@@ -389,6 +408,9 @@ def sessao(args, dev_real, sysfs):
                         else:
                             os.write(hidraw, dados)
                         n_out += 1
+                        if args.verbose and dados:
+                            print("  app->pedal  %s  (set_report)"
+                                  % legivel(dados))
                     except OSError as e:
                         err = e.errno or errno.EIO
                     os.write(uhid, struct.pack("<IH", UHID_SET_REPORT_REPLY,
