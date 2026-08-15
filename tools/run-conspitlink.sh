@@ -19,7 +19,9 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export WINEPREFIX="$repo/.wine-conspitlink"
+# shellcheck source=conspit-prefixo.sh
+. "$repo/tools/conspit-prefixo.sh"
+export WINEPREFIX
 export WINEDEBUG="${WINEDEBUG:--all}"
 
 app="$WINEPREFIX/drive_c/Program Files (x86)/Conspit Link 2.0"

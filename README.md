@@ -168,7 +168,8 @@ proprietário e está no `.gitignore`, ~300 MB).
 
 ```bash
 cd ~/apps/conspit-ares-linux
-export WINEPREFIX="$PWD/.wine-conspitlink"
+export WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix"
+mkdir -p "$WINEPREFIX"
 
 wineboot -u                       # cria o prefixo isolado
 wine ConspitLink2.0.exe /S        # instalação silenciosa
@@ -297,7 +298,7 @@ Para ver exatamente o que o app enxerga, compile o enumerador e rode dentro do p
 
 ```bash
 x86_64-w64-mingw32-gcc tools/hidenum.c -o /tmp/hidenum.exe -lhid -lsetupapi
-WINEPREFIX="$PWD/.wine-conspitlink" wine /tmp/hidenum.exe
+WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix" wine /tmp/hidenum.exe
 ```
 
 Cada device Conspit deve aparecer com suas duas collections (`usage 0x04` para o joystick,

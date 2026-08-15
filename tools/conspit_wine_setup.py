@@ -35,12 +35,23 @@ import sys
 # o QSerialPortInfo varre no Windows.
 GUID_PORTS = "{4D36E978-E325-11CE-BFC1-08002BE10318}"
 
-PREFIXO_PADRAO = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    ".wine-conspitlink")
+def prefixo_padrao():
+    """Prefixo Wine do projeto. Mesma regra do tools/conspit-prefixo.sh.
 
-# Fora da faixa 1..32, que o wineboot preenche sozinho varrendo /dev/ttyS*.
-# Usar um numero de la vira corrida com o wineboot, que sobrescreve o symlink.
+    Dedicado (nao o ~/.wine) porque o `Enable SDL=0` vale para o prefixo
+    INTEIRO, e num prefixo compartilhado quebraria a enumeracao de controle
+    de todo outro app Windows dali. Fora do repo porque passa de 870 MB e um
+    `git clean -xfd` apagaria a configuracao junto.
+    """
+    if os.environ.get("CONSPIT_PREFIX"):
+        return os.environ["CONSPIT_PREFIX"]
+    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return os.path.join(base, "conspit-ares-linux", "prefix")
+
+
+# Fora da faixa 1..32, que o wineboot preenche sozinho. Ele varre /dev/ttyS*
+# E TAMBEM /dev/ttyACM*, que caem depois de 32 (aqui: com34, com35) -- por
+# isso 33 continua livre, mas nao conte com numeros muito acima.
 COM_PADRAO = 33
 
 VID_CONSPIT = "3514"
@@ -412,7 +423,7 @@ def desfazer(prefixo, com):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--prefixo", default=PREFIXO_PADRAO)
+    ap.add_argument("--prefixo", default=prefixo_padrao())
     ap.add_argument("--com", type=int, default=COM_PADRAO)
     ap.add_argument("--verificar", action="store_true")
     ap.add_argument("--desfazer", action="store_true")

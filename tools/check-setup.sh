@@ -289,11 +289,13 @@ fi
 # -------------------------------------------------------------- prefixo wine
 secao "7. ConspitLink sob Wine (opcional)"
 
-pfx="$repo/.wine-conspitlink"
+# shellcheck source=conspit-prefixo.sh
+. "$repo/tools/conspit-prefixo.sh"
+pfx="$WINEPREFIX"
 if [[ ! -d "$pfx" ]]; then
   aviso "prefixo Wine nao criado" "siga o Passo 3 do README"
 else
-  ok "prefixo existe"
+  ok "prefixo existe ($pfx)"
   if [[ -d "$pfx/drive_c/Program Files (x86)/Conspit Link 2.0" ]]; then
     ok "ConspitLink instalado"
   else

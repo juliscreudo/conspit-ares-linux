@@ -234,7 +234,12 @@ depois**.
 
 Instalador NSIS de 300 MB, EV-signed por 恩速（上海）电子科技有限公司 (entidade legal da
 Conspit). Instala silenciosamente com `wine ConspitLink2.0.exe /S`. Prefixo isolado deste
-projeto: `.wine-conspitlink/` (fora do git; apagar a pasta desfaz tudo).
+projeto: **`~/.local/share/conspit-ares-linux/prefix`** (apagar a pasta desfaz tudo).
+Ate 2026-08-15 ficava em `<repo>/.wine-conspitlink`; saiu de la porque passa de 870 MB e um
+`git clean -xfd` apagava a configuracao junto. Resolvido por `tools/conspit-prefixo.sh`,
+com override em `$CONSPIT_PREFIX`. ⚠️ **Nao usar o `~/.wine` compartilhado:** o
+`Enable SDL=0` vale para o prefixo inteiro e quebraria a enumeracao de controle de todo
+outro app Windows dele.
 
 App **Qt 5.15.2, x86-64**, 479 MB instalado. Bibliotecas que dizem como ele fala com o
 hardware: `Qt5SerialPort.dll` (a CDC), `hidapi.dll` (canal HID proprietário),
