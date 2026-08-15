@@ -11,6 +11,10 @@ indicados onde diferem. Se algo divergir na sua, `tools/check-setup.sh` aponta o
 Projeto pessoal, sem garantia nem suporte. Firmware, hardware e o projeto OpenFFBoard são
 de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 
+Licenciado sob **[GPL-3.0](LICENSE)**: use, estude, modifique e forke à vontade. Quem
+distribuir uma versão modificada é obrigado a manter o código aberto sob a mesma licença —
+ninguém fecha isto num produto proprietário.
+
 ## O que funciona
 
 | | estado |
