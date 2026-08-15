@@ -4,12 +4,32 @@ Ferramentas e passo a passo para usar os periféricos **Conspit** no Linux, incl
 **ConspitLink 2.0 rodando sob Wine** com configuração e telemetria em tempo real de todos os
 dispositivos.
 
+### O que este projeto é — e o que não é
+
+Isto é **a solução que eu usei** para fazer meus dispositivos Conspit funcionarem no Linux,
+organizada para outra pessoa conseguir repetir.
+
+**Não portei nada.** Não há driver reescrito, nem software reimplementado, nem versão Linux
+do ConspitLink. O app é o **binário oficial da Conspit, sem modificação**, rodando sob Wine.
+O que este repositório contém é o resultado de **análise, configuração e ajuste**:
+
+- descobrir como cada dispositivo se apresenta ao kernel, e o que o Linux erra por padrão;
+- uma regra `udev` que corrige isso;
+- os ajustes de registro que fazem o Wine entregar o hardware ao app do jeito certo;
+- ferramentas de diagnóstico (quase todas somente de leitura) para você conferir cada etapa;
+- a documentação do que foi medido, **inclusive dos caminhos errados**.
+
+Nada aqui redistribui software de terceiros. O ConspitLink é da **Conspit** e você o baixa do
+site oficial; o firmware da base é o **[OpenFFBoard](https://github.com/Ultrawipf/OpenFFBoard)**
+(Ultrawipf); a ponte de telemetria é o
+**[Winecarte](https://github.com/srounce/winecarte)** (srounce). O mérito do que funciona é
+em boa parte desses projetos — aqui só se juntou as peças.
+
+Projeto pessoal, sem garantia nem suporte.
+
 Validado com o hardware ligado em **Fedora 44** (2026-08-12, Wine 11.14) e em **CachyOS**
 (2026-08-14 e 2026-08-15, kernel 7.1, Wine 11.15). Os comandos de cada distro estão
 indicados onde diferem. Se algo divergir na sua, `tools/check-setup.sh` aponta o quê.
-
-Projeto pessoal, sem garantia nem suporte. Firmware, hardware e o projeto OpenFFBoard são
-de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 
 Licenciado sob **[GPL-3.0](LICENSE)**: use, estude, modifique e forke à vontade. Quem
 distribuir uma versão modificada é obrigado a manter o código aberto sob a mesma licença —
@@ -43,10 +63,26 @@ protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/p
 
 ---
 
+## O caminho, em 4 passos
+
+| passo | o que resolve | precisa? |
+|---|---|---|
+| **1 — Regra udev** | zona morta e serrilhado dos eixos; acesso HID | **obrigatório**, mesmo sem Wine |
+| **2 — Verificar o hardware** | confirma que a base responde antes de seguir | recomendado |
+| **3 — ConspitLink sob Wine** | configurar base, pedais e volante pela GUI oficial | opcional |
+| **4 — Telemetria de jogo** | haptics no modo `Customize` e dash do volante | opcional, depende do 3 |
+
+Se você só quer **FFB nos jogos com os eixos corretos**, o Passo 1 basta e você pode parar
+ali. Os passos 3 e 4 existem para ter a configuração e a telemetria como no Windows.
+
+A qualquer momento, `tools/check-setup.sh` diz onde você está e o que falta.
+
+---
+
 ## Pré-requisitos
 
 ```bash
-git clone git@github.com:juliscreudo/conspit-ares-linux.git ~/apps/conspit-ares-linux
+git clone https://github.com/juliscreudo/conspit-ares-linux.git ~/apps/conspit-ares-linux
 cd ~/apps/conspit-ares-linux
 ```
 
@@ -54,11 +90,12 @@ cd ~/apps/conspit-ares-linux
 
 Nada aqui depende de distro; só os nomes dos pacotes mudam.
 
-| o que | Fedora | Arch / CachyOS |
-|---|---|---|
-| `evdev-joystick` (zera fuzz/deadzone) | `linuxconsoletools` | `linuxconsole` |
-| pyserial | `python3-pyserial` | `python-pyserial` |
-| Wine (só p/ o ConspitLink) | `wine` | `wine` — precisa do repo **multilib** habilitado |
+| o que | para quê | Fedora | Arch / CachyOS |
+|---|---|---|---|
+| `evdev-joystick` | zera fuzz/deadzone (Passo 1) | `linuxconsoletools` | `linuxconsole` |
+| pyserial | ferramentas de diagnóstico (Passo 2) | `python3-pyserial` | `python-pyserial` |
+| Wine | rodar o ConspitLink (Passo 3) | `wine` | `wine` — precisa do repo **multilib** |
+| mingw-w64 *(opcional)* | compilar o `hidenum.exe` de diagnóstico | `mingw64-gcc` | `mingw-w64-gcc` |
 
 ```bash
 # Fedora
@@ -77,6 +114,38 @@ dnf provides '*/evdev-joystick'   # Fedora
 
 > ⚠️ No Arch, **não** use `pip install pyserial`: o PEP 668 bloqueia instalação global e o
 > pacote da distro é o caminho certo.
+
+### Winecarte (telemetria de jogo)
+
+**Só necessário para o Passo 4.** Pule se não vai usar haptics em jogo nem o dash do
+volante.
+
+O **[Winecarte](https://github.com/srounce/winecarte)** (de
+[srounce](https://github.com/srounce)) é o que faz a telemetria atravessar a fronteira entre
+o prefixo do jogo e o do ConspitLink. **Não é parte deste projeto** e é instalado à parte:
+
+| repositório | o que é |
+|---|---|
+| **[srounce/winecarte](https://github.com/srounce/winecarte)** | a ponte em si (`winecarte-run`, `winehub`, `wine2linux.exe`) |
+| **[srounce/linux-simracing-utils](https://github.com/srounce/linux-simracing-utils)** | instalador do mesmo autor; é o **jeito mais fácil** de obter o Winecarte, e já traz SimHub e CrewChief |
+
+O caminho recomendado é o instalador:
+
+```bash
+git clone https://github.com/srounce/linux-simracing-utils
+cd linux-simracing-utils
+bash install.sh          # aceite os defaults; o Winecarte é um dos componentes
+```
+
+> Ele pergunta o que instalar. **O componente obrigatório aqui é o Winecarte**; SimHub e
+> CrewChief são independentes deste projeto e você pode pular.
+
+> ⚠️ Escolha bem a pasta antes de instalar: o caminho fica gravado nos lançadores. Se mover
+> depois, rode o `install.sh` de novo do novo lugar.
+
+O `tools/run-conspitlink.sh` **acha o Winecarte sozinho** se ele estiver no `PATH` ou em
+`~/apps/linux-simracing-utils/bin/`. Sem ele o app abre normalmente — só sem telemetria de
+jogo.
 
 ### Acesso à porta serial
 
@@ -153,7 +222,9 @@ O que a regra corrige, medido antes dela:
 > caminho estável para os três eixos reais. (O H.AO não sofre disso: como tem botões, o
 > `input_id` classifica a collection certa sozinho.)
 
-## Passo 2 — Verificar o hardware
+## Passo 2 — Verificar o hardware (recomendado)
+
+Com a base **ligada por USB**. Tudo aqui é somente leitura — nada é escrito no hardware.
 
 ```bash
 python3 tools/probe_serial.py            # fala o protocolo OpenFFBoard (só leitura)
@@ -167,13 +238,14 @@ python3 tools/cpp_pedal.py ler           # config gravada nos pedais (só leitur
 
 ---
 
-## Passo 3 — ConspitLink 2.0 sob Wine
+## Passo 3 — ConspitLink 2.0 sob Wine (opcional)
 
-Baixe o **ConspitLink2.0.exe** do site oficial da Conspit e coloque na raiz do repo (ele é
-proprietário e está no `.gitignore`, ~300 MB).
+Baixe o **ConspitLink2.0.exe** do site oficial da Conspit e coloque na raiz do repo. Ele é
+proprietário (~300 MB), está no `.gitignore` e **não é redistribuído aqui** — você precisa
+obtê-lo da Conspit.
 
 ```bash
-cd ~/apps/conspit-ares-linux
+cd ~/apps/conspit-ares-linux        # a pasta do clone
 export WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix"
 mkdir -p "$WINEPREFIX"
 
@@ -254,8 +326,7 @@ objetos do wineserver é **por prefixo**. O jogo roda no prefixo do Proton, o Co
 dele, e um não enxerga a memória do outro — o app fica em `Not Started` para sempre.
 
 Quem resolve é o **[Winecarte](https://github.com/srounce/winecarte)**, que faz a ponte em
-duas metades. Instale-o (o jeito mais fácil é o instalador
-[linux-simracing-utils](https://github.com/srounce/linux-simracing-utils), do mesmo autor) e:
+duas metades — instalado nos [Pré-requisitos](#winecarte-telemetria-de-jogo).
 
 1. **No jogo**, em *Propriedades → Opções de Lançamento* no Steam:
 
