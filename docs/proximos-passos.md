@@ -1,249 +1,41 @@
-# Próximos passos — análise para discussão
-
-Levantado em **2026-08-15**, depois de o ConspitLink passar a funcionar com todos os
-dispositivos (base Ares Platinum, pedais CPP.LITE, volante H.AO) via backend hidraw do
-`winebus`. Nada aqui foi executado ainda — é material de decisão.
-
-**Três decisões pendentes do usuário estão marcadas com ❓ e bloqueiam a execução.**
-
----
-
-## 1. Onde ficam o prefixo Wine e o instalador
-
-### Fatos medidos
-
-| item | tamanho | onde |
-|---|---|---|
-| `.wine-conspitlink/` | **876 MB** | raiz do repo (gitignored) |
-| `ConspitLink2.0.exe` | 300 MB | raiz do repo (gitignored) |
-| código versionado | ~50 KB | — |
-
-⚠️ O CLAUDE.md estimava "~500 MB" para o prefixo. São 876 MB (`drive_c/windows` 376 MB +
-`Program Files (x86)` 495 MB, incluindo o `.pdb` de 77 MB).
-
-**O prefixo é movível** — verificado: zero caminhos absolutos do repo em `system.reg` e
-`user.reg`. O `dosdevices/c:` é relativo (`../drive_c`) e o `com33` aponta para
-`/dev/serial/by-id/`, fora do repo. Mover = `mv` + ajustar 3 referências, todas derivadas de
-`$repo`: `conspit_wine_setup.py`, `check-setup.sh`, `run-conspitlink.sh`.
-
-### O que o arranjo atual custa
-
-`git clean -xfd` — comando corriqueiro — **apaga 1,2 GB de estado calibrado**. Qualquer
-backup de `~/apps` carrega isso junto. E conceitualmente é runtime dentro de um checkout de
-código.
-
-### Opções
-
-| opção | prós | contras |
-|---|---|---|
-| **`~/.local/share/conspit-linux/prefix`** (XDG) | convenção reconhecida; sobrevive a `git clean` e a re-clonar | desinstalar vira dois lugares |
-| `~/.wine-conspitlink` | simples, parecido com `~/.wine` | polui a home, não é XDG |
-| manter no repo | autocontido; "apagar a pasta desfaz tudo" | os problemas acima |
-
-### Recomendação
-
-XDG como default, sobreponível por `CONSPIT_PREFIX`. O instalador **sai do repo**: o script
-passa a aceitar `--instalador ~/Downloads/ConspitLink2.0.exe`, já que só é usado uma vez —
-removendo 300 MB de vez.
-
-Migração com o app fechado e `wineserver -k` antes.
-
-❓ **DECISÃO A: XDG (recomendado) ou manter no repo?**
-
-### Achado lateral a corrigir junto
-
-O Wine mapeia `/dev/ttyACM*` sozinho em **com34/com35**, além dos `ttyS*` em com1–32. A
-COM33 continua melhor (aponta para o `by-id` estável), mas o comentário no
-`conspit_wine_setup.py` que diz "o wineboot preenche com1..com32 varrendo `/dev/ttyS*`" está
-incompleto.
-
----
-
-## 2. Atalho `.desktop`
-
-### Fatos
-
-O `winemenubuilder` **já criou um sozinho**:
-
-```
-~/.local/share/applications/wine/Programs/Conspit Link 2.0/Conspit Link 2.0.desktop
-Exec=env "WINEPREFIX=/home/.../conspit-ares-linux/.wine-conspitlink" wine "C:\...\Conspit Link 2.0.lnk"
-Icon=4796_ConspitLink2.0.0
-StartupWMClass=conspitlink2.0.exe
-```
-
-Ícone já extraído em `~/.local/share/icons/hicolor/64x64/apps/4796_ConspitLink2.0.0.png`, e
-o `StartupWMClass` já está correto (é o que faz o ícone agrupar direito na barra de tarefas).
-
-### O problema
-
-Ele executa o `.lnk` direto, **pulando os pre-flights** do `run-conspitlink.sh` — backend
-hidraw e device fora do `EnableHidraw` —, que são justamente as duas verificações que evitam
-a falha confusa de "o app abre mas não lista nada". Além disso o `winemenubuilder`
-**sobrescreve** esse arquivo em updates, e o caminho do prefixo está hardcoded.
-
-### Recomendação
-
-`tools/instalar-atalho.sh` que gera `~/.local/share/applications/conspit-link.desktop`
-chamando o `run-conspitlink.sh`, reaproveita o ícone já extraído, mantém o `StartupWMClass`,
-e desativa o `winemenubuilder` no prefixo para não voltar.
-
-⚠️ **Depende do ponto 1** (o `Exec` carrega o caminho do prefixo). Fazer **1 antes de 2**.
-
----
-
-## 3. Reorganizar `tools/` em subpastas
-
-### Fatos
-
-10 arquivos, 1806 linhas. Categorias naturais:
-
-| categoria | arquivos |
-|---|---|
-| setup / execução | `check-setup.sh`, `conspit_wine_setup.py`, `run-conspitlink.sh` |
-| diagnóstico read-only | `probe_serial.py`, `evdev_info.py`, `hid_watch.py`, `parse_hid_rdesc.py` |
-| diagnóstico dentro do Wine (mingw) | `hidenum.c`, `dinput_axes.c` |
-| escreve no device | `cpp_pedal.py` |
-
-### Recomendação: **não reorganizar**
-
-O custo é real — README e CLAUDE.md têm dezenas de referências `tools/x.py` que quebrariam —
-e 10 arquivos numa pasta plana são perfeitamente navegáveis. O ganho seria estético. A
-distinção que de fato importa numa base de 20 Nm (**read-only vs. escreve**) já está
-resolvida por convenção documentada nas tabelas.
-
-**O que vale, e é barato:** um `tools/Makefile` de ~5 linhas para os dois `.c`, cujo comando
-de compilação hoje só existe no cabeçalho do arquivo.
-
-Reavaliar se um dia passar de ~15 ferramentas.
-
----
-
-## 4. Outros periféricos Conspit
-
-### O projeto já é ~80% genérico — e há prova empírica
-
-**O volante H.AO funcionou 100% no dia em que foi ligado, sem uma linha de código específica
-para ele** (botões, brilho, dashboard, paddles Hall, Launch Control). Isso não foi sorte:
-
-- `udev/70-conspit.rules` seção 1 casa por `ATTRS{idVendor}=="3514"` **sem PID** → qualquer
-  device Conspit ganha ACL de hidraw e `uaccess` automaticamente;
-- `conspit_wine_setup.py` **detecta os PIDs do barramento** e escreve o `EnableHidraw`;
-- `Enable SDL=0` é catch-all que cobre até device ligado depois do setup.
-
-### O que NÃO é genérico
-
-17 das 28 ocorrências de PID no repo estão em `udev/70-conspit.rules`.
-
-1. **fuzz/flat** — hoje uma linha por PID, porque os valores se medem device a device. Mas dá
-   para generalizar: uma regra que zere fuzz/flat de *qualquer* joystick Conspit cobriria
-   tudo de uma vez. O por-PID era conservadorismo. **Vale rediscutir.**
-2. **A armadilha do `by-id` em device sem botões** — os pedais precisam de
-   `ATTRS{capabilities/abs}=="e"` porque o `input_id` não os classifica sozinho (não têm
-   botão). Um CPP.EVO/Apex deve ter a mesma estrutura mas **outro conjunto de eixos** → outro
-   valor de `capabilities`. Não dá para adivinhar.
-   ⚠️ **Freio de mão é o caso clássico do problema**: 1 eixo, zero botões.
-3. **`cpp_pedal.py`** — PID `0x0005` fixo; o protocolo `$` foi capturado do CPP.LITE.
-
-### Recomendação
-
-Criar `docs/adicionar-dispositivo.md` com:
-
-- **roteiro de diagnóstico**: `lsusb` → `parse_hid_rdesc.py` → `hidenum.exe` (dentro do
-  prefixo) → `evdev_info.py` → o que reportar num issue;
-- **matriz de suporte**, separando claramente:
-  - ✅ **testado**: Ares Platinum 20 Nm, CPP.LITE, H.AO
-  - ⚠️ **deve funcionar, não testado**: Ares Apex, CPP.EVO, CPP.Apex, 290GP, PW1, câmbio H,
-    freio de mão — com o aviso de que podem divergir (ordem de eixos diferente, volante sem
-    eixo analógico, device sem botões);
-- um parágrafo explícito dizendo que o repo carrega o **CLAUDE.md como contexto** para pedir
-  análise a um LLM sobre um produto Conspit específico. O caminho das pedras já existe;
-  falta empacotá-lo.
-
-Generalizar a regra de fuzz/flat por vendor, mantendo exceções por-PID só onde medido.
-
----
-
-## 5. README para a comunidade
-
-### Fatos
-
-291 linhas, bem escritas — mas para *uma* pessoa com *um* setup.
-
-### Problemas para quem chega de fora
-
-1. `git clone git@github.com:...` é **SSH**; alguém de fora precisa de HTTPS.
-2. Falta um "o que isto resolve" em 3 linhas, e um **screenshot** (já existem dois).
-3. Falta troubleshooting **por sintoma** ("não vejo meus pedais"), não por causa.
-4. Não está claro que o CLAUDE.md (671 linhas) é opcional / material de investigação.
-5. **Não tem licença** — sem ela o repo é legalmente "todos os direitos reservados" e
-   ninguém pode usar ou forkar com segurança.
-
-### A decisão de maior impacto da lista inteira
-
-O README está em **PT-BR** e a comunidade sim-racing/Linux é majoritariamente internacional.
-Um README em **inglês** (mantendo CLAUDE.md e `docs/` em português) provavelmente multiplica
-o alcance mais do que todos os outros itens somados.
-
-❓ **DECISÃO B: README em inglês ou português?**
-❓ **DECISÃO C: qual licença?** (MIT e Apache-2.0 são as usuais para ferramentas assim; a
-segunda tem cláusula de patentes. "Nenhuma" também é uma resposta válida, mas convém ser
-explícita.)
-
----
-
-## 6. Integração com a telemetria do jogo — ✅ RESOLVIDO em 2026-08-15
-
-**Validado no Le Mans Ultimate:** `Select Game` foi de `Not Started` para **`Started`**, a
-telemetria alimentou o app, os **haptics no modo `Customize`** vibraram conforme o efeito, e
-o **dash / rev lights** do volante receberam os dados.
-
-A documentação completa foi para o [CLAUDE.md](../CLAUDE.md) ("A telemetria de jogo,
-resolvida") e o passo a passo para o [README](../README.md) ("Passo 4"). O que fica aqui é o
-registro do que a análise original errou.
-
-### ⚠️ Correção: a detecção NÃO é enumeração de processos
-
-A análise de algumas horas antes afirmava, a partir dos imports `CreateToolhelp32Snapshot` e
-`OpenProcess`, que a detecção do jogo era por varredura de processos — e concluía que seria
-**um problema separado da telemetria**, que sobreviveria mesmo com os dados chegando.
-
-**Errado.** Os símbolos do `.pdb` mostram `GanmeOf<Jogo>::Get_GameStatus` ao lado de
-`Get_InitSuccess` e `GameData::Slot_initShareMemory`: a detecção **é o próprio attach à
-memória compartilhada**. Detecção e telemetria são o mesmo problema e se resolveram juntas.
-
-A lição vale além deste caso: **um import presente não prova que é o mecanismo usado.**
-O `.pdb` responde o que o import não responde, e estava disponível o tempo todo.
-
-### O que também estava incompleto
-
-- *"Testar um jogo UDP primeiro"* — não era testável: a biblioteca do usuário (Assetto
-  Corsa, iRacing, Le Mans Ultimate) é **inteiramente** do regime de memória compartilhada.
-- O plano previa avaliar **rodar o ConspitLink dentro do prefixo do Proton do jogo**, com os
-  riscos do `pressure-vessel`. **Não foi necessário** — o Winecarte replica a shm entre
-  prefixos e o app fica no prefixo dele.
-
-### O que sobra em aberto
-
-- ❌ **iRacing** — o Winecarte não exporta `Local\IRSDKMemMapFileName`. É o único dos três
-  jogos desta bancada que não funciona, e uma contribuição natural upstream.
-- ⚠️ **ETS2 / ATS** — o ConspitLink abre `Local\SCSTelemetry`, o Winecarte exporta
-  `Local\SHSCSTelemetry`. O prefixo `SH` difere; não testado.
-- **Jogos UDP** — devem funcionar sem ponte nenhuma, mas nenhum está instalado aqui. O
-  usuário considerou instalar um Forza para validar; não prioritário.
-
----
-
-## Ordem sugerida de execução
-
-```
-1.  prefixo (XDG)       bloqueia o 2
-2.  atalho .desktop
-4.  generalizar devices muda o conteúdo do README
-5.  README              por último, para documentar o estado final
-3.  tools/              descartado, exceto o Makefile
-6.  telemetria          ✅ feito em 2026-08-15
-```
-
-Restam as **três decisões** do usuário (A: prefixo XDG, B: idioma do README, C: licença) para
-destravar 1, 2 e 5.
+# Pendências
+
+Atualizado em **2026-08-15**, depois da rodada que executou o plano original (os seis pontos
+de análise estão resolvidos ou descartados; o registro do que foi feito está no
+[historico-investigacao.md](historico-investigacao.md), Fase 5, e no `git log`).
+
+## Pendente
+
+### 1. README em inglês
+
+Decisão tomada: **sim, ao final dos ajustes**. O README em PT-BR foi reestruturado para
+replicação (2026-08-15); falta a versão em inglês — a comunidade sim-racing/Linux é
+majoritariamente internacional, e esta é provavelmente a mudança de maior alcance do
+projeto. Manter CLAUDE.md e `docs/` em português.
+
+### 2. `tools/Makefile`
+
+Pequeno: um alvo para os dois `.c` (`hidenum.c`, `dinput_axes.c`), cujo comando de
+compilação hoje só existe no cabeçalho de cada arquivo. (Da análise de reorganização do
+`tools/` — o resto foi avaliado e **descartado de propósito**: 12 arquivos numa pasta plana
+são navegáveis, e mover quebraria dezenas de referências na documentação.)
+
+### 3. Push inicial + varredura de dados sensíveis
+
+Os commits estão todos locais. Antes do primeiro push: varrer o **histórico inteiro** (não
+só os diffs) por serial da base, e-mail, caminhos pessoais que não deveriam vazar.
+
+## Aberto, sem prioridade definida
+
+- **iRacing sem telemetria** — o Winecarte não exporta o mapa dele. Se alguém atacar:
+  `Local\IRSDKMemMapFileName` + `Local\IRSDKDataValidEvent` + `IRSDK_BROADCASTMSG`.
+  Contribuição natural para o upstream (https://github.com/srounce/winecarte).
+- **ETS2/ATS** — o app abre `Local\SCSTelemetry`, o Winecarte exporta `Local\SHSCSTelemetry`
+  (prefixo `SH`). Divergência anotada, não testada.
+- **Jogos UDP** (F1, DiRT 2.0, EA WRC, Forza) — devem funcionar sem ponte (UDP para
+  `127.0.0.1`); nenhum instalado nesta bancada. O usuário cogitou instalar um Forza para
+  validar; não prioritário.
+- **Canal vendor do H.AO** — protocolo não mapeado (rota: usbmon, ver CLAUDE.md "Captura de
+  protocolo").
+- **PRs upstream para o OpenFFBoard-configurator** — os dois bugs genéricos encontrados em
+  2026-08-12 (parser do `lsbtn` e corrida no `processMatchedReply`; ver histórico, Fase 1).
