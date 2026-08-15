@@ -540,6 +540,46 @@ Duas armadilhas que custaram tempo aqui:
 2. **O Wine só considera devices com `ID_INPUT_JOYSTICK`** no caminho evdev; a mesma regra
    atribui.
 
+### ⚠️ Pendência: a barra/gráfico de posição dos pedais no app está errada
+
+**Os rótulos estão certos** (acelerador no acelerador etc. — confirmado na GUI). O que
+continua errado é o **valor** que a barra mostra. Medido em 2026-08-14, com escala 1:
+
+| curso real do pedal | o app mostra |
+|---|---|
+| repouso | ~6% (e MIN não zera) |
+| ~25% | ~100% |
+| acima de 25% | passa de 100% e a barra some (estouro) |
+
+Ou seja: o app satura quando o `DIJOYSTATE2` chega perto de **16384**, e recebe até 65535.
+
+**O que foi tentado e NÃO resolveu:**
+
+1. **Escala 2× e 4×** no Logical Maximum do device virtual (`--escala`). A ideia era fazer o
+   curso inteiro caber abaixo do ponto de saturação. Em ambos os casos a barra parou de
+   mostrar qualquer coisa. Parte dos testes foi contaminada por processos `winedevice`
+   órfãos, então o resultado **não é conclusivo** — mas não convergiu.
+2. **Semear a posição** para matar o valor fantasma. Em repouso a pedaleira transmite
+   relatórios continuamente **com valores idênticos**, o kernel suprime valor repetido, e o
+   `DIJOYSTATE2` fica no default `32767` (meio curso). O keepalive de 1 s com oscilação de
+   1 unidade gera **36 eventos ABS em 5 s no evdev do device virtual** — e mesmo assim o
+   DirectInput continua reportando `32767`. Não foi entendido por quê: o `winedevice` tem
+   `hidraw` **e** `event*` do device abertos, não há device duplicado no DirectInput, e o
+   mesmo mecanismo funcionou com um device de teste isolado.
+
+⚠️ **Dois erros de medição meus neste trecho, para não repetir:** (a) tomar o **máximo** de
+`lX` observado inclui o `32767` inicial e mascara valores menores; (b) o despejo começa com o
+valor padrão, então ler o **começo** do log mostra `32767` mesmo quando o dado real chegou —
+olhar o **fim**.
+
+**Onde investigar se alguém retomar:** por que o DirectInput não reflete eventos que
+comprovadamente chegam ao `evdev` do device virtual (trace `+dinput` do lado do
+`winedevice`), ou o caminho caro — desmontar no `.pdb` como o app converte o valor do eixo.
+
+**Impacto:** é indicador de tela, como o `NC` do ângulo da base. Não afeta FFB, não afeta os
+jogos (que leem o device real pelo caminho nativo), e não impede calibrar: os comandos `$` de
+calibração vão para a pedaleira real pelo canal vendor — verificado no log do shim.
+
 ### Conviver com o device virtual durante o jogo
 
 Os dois canais virtuais servem a coisas diferentes, e isso decide o que fazer:

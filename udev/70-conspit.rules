@@ -183,4 +183,7 @@ SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID
 # a mais. Por isso o run-conspitlink.sh sobe o shim junto com o app e o
 # derruba ao fechar -- fora do ConspitLink ele nao existe.
 
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="CONSPIT CPP.LITE Axis", TAG+="uaccess", ENV{ID_INPUT_JOYSTICK}="1"
+# O RUN+ zera fuzz/flat tambem no device virtual: ele nasce com fuzz 15 e
+# flat 255 (defaults do hid-generic), ou seja ~6% de curso morto no comeco
+# de cada pedal -- o mesmo defeito que a secao 2 corrige no device real.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="CONSPIT CPP.LITE Axis", TAG+="uaccess", ENV{ID_INPUT_JOYSTICK}="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"

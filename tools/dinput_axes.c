@@ -22,6 +22,8 @@
 static IDirectInput8W *di;
 static IDirectInputDevice8W *dev;
 static int ordem;
+static int achados;
+static int escolha;
 
 static const char *campo_do_guid(const GUID *g)
 {
@@ -66,9 +68,11 @@ static BOOL CALLBACK ao_achar_device(const DIDEVICEINSTANCEW *inst, void *ctx)
     printf("device: VID_%04X PID_%04X  \"%ls\"  devtype 0x%lX\n",
            vid, pid, inst->tszProductName, (unsigned long)inst->dwDevType);
     if (vid == ALVO_VID && pid == ALVO_PID) {
-        if (SUCCEEDED(IDirectInput8_CreateDevice(di, &inst->guidInstance,
-                                                 &dev, NULL)))
-            return DIENUM_STOP;
+        achados++;
+        /* pula os primeiros `escolha` casamentos: com varios devices do
+         * mesmo VID/PID (real + virtuais do shim) e' preciso escolher */
+        if (!dev && achados > escolha)
+            IDirectInput8_CreateDevice(di, &inst->guidInstance, &dev, NULL);
     }
     return DIENUM_CONTINUE;
 }
@@ -76,6 +80,8 @@ static BOOL CALLBACK ao_achar_device(const DIDEVICEINSTANCEW *inst, void *ctx)
 int main(int argc, char **argv)
 {
     int segundos = (argc > 1) ? atoi(argv[1]) : 0;
+    int dump = (argc > 2);   /* 2o argumento qualquer liga o despejo continuo */
+    escolha = (argc > 3) ? atoi(argv[3]) : 0;   /* qual casamento usar */
 
     if (FAILED(DirectInput8Create(GetModuleHandleW(NULL), DIRECTINPUT_VERSION,
                                   &IID_IDirectInput8W, (void **)&di, NULL))) {
@@ -136,6 +142,14 @@ int main(int argc, char **argv)
             for (i = 0; i < 6; i++) {
                 if (v[i] < lo[i]) lo[i] = v[i];
                 if (v[i] > hi[i]) hi[i] = v[i];
+            }
+            /* despejo continuo: mostra a RAMPA, nao so a faixa. E' o que
+             * separa "leitura binaria" de "leitura proporcional". */
+            static DWORD prox_dump;
+            if (dump && GetTickCount() >= prox_dump) {
+                prox_dump = GetTickCount() + 250;
+                printf("    lX=%6ld  lY=%6ld  lZ=%6ld\n", st.lX, st.lY, st.lZ);
+                fflush(stdout);
             }
             DWORD seg = (GetTickCount() - (fim - segundos * 1000)) / 1000;
             if (seg != ultimo) {

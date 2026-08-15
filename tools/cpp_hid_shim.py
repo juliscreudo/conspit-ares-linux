@@ -123,21 +123,27 @@ def report_ids(rd):
 # X, Y, Z. O Wine batiza os eixos na ORDEM DE APARICAO (foi assim que o
 # Rx do descritor real virou lX), entao declarar X/Y/Z deixa explicito
 # onde cada um vai cair no DIJOYSTATE2 que o app le.
-RD_EIXOS = bytes([
-    0x05, 0x01,        # Usage Page (Generic Desktop)
-    0x09, 0x04,        # Usage (Joystick)
-    0xA1, 0x01,        # Collection (Application)
-    0x85, 0x01,        #   Report ID (1)
-    0x15, 0x00,        #   Logical Minimum (0)
-    0x26, 0xFF, 0x0F,  #   Logical Maximum (4095)
-    0x75, 0x10,        #   Report Size (16)
-    0x95, 0x03,        #   Report Count (3)
-    0x09, 0x30,        #   Usage (X)
-    0x09, 0x31,        #   Usage (Y)
-    0x09, 0x32,        #   Usage (Z)
-    0x81, 0x02,        #   Input (Data,Var,Abs)
-    0xC0,              # End Collection
-])
+def rd_eixos(maximo):
+    """Descritor do joystick virtual: 3 eixos declarados como X, Y, Z.
+
+    `maximo` e' o Logical Maximum. Com 4095 (o mesmo da pedaleira) o curso
+    inteiro vira 0..65535 no DIJOYSTATE2. Com 8191, o curso inteiro ocupa
+    so a METADE de baixo (0..32767) -- ver --meia-escala."""
+    return bytes([
+        0x05, 0x01,                                # Usage Page (Generic Desktop)
+        0x09, 0x04,                                # Usage (Joystick)
+        0xA1, 0x01,                                # Collection (Application)
+        0x85, 0x01,                                #   Report ID (1)
+        0x15, 0x00,                                #   Logical Minimum (0)
+        0x26, maximo & 0xFF, (maximo >> 8) & 0xFF,  #   Logical Maximum
+        0x75, 0x10,                                #   Report Size (16)
+        0x95, 0x03,                                #   Report Count (3)
+        0x09, 0x30,                                #   Usage (X)
+        0x09, 0x31,                                #   Usage (Y)
+        0x09, 0x32,                                #   Usage (Z)
+        0x81, 0x02,                                #   Input (Data,Var,Abs)
+        0xC0,                                      # End Collection
+    ])
 
 # Ordem padrao: qual campo do relatorio REAL alimenta cada eixo virtual.
 #
@@ -169,8 +175,83 @@ def uhid_criar(fd, rd, nome, uniq):
     os.write(fd, ev + rd)
 
 
+def ler_posicao_atual():
+    """Le a posicao ATUAL dos tres pedais pelo evdev do device real.
+
+    Existe porque a pedaleira so transmite quando algo muda: sem isso o
+    device virtual nasce sem nenhum relatorio e o Wine mantem os eixos no
+    default de meio curso (32767) ate alguem pisar em algo -- o app le esse
+    valor fantasma como se fosse a posicao do pedal.
+
+    Devolve os valores na ordem dos campos do relatorio HID real
+    (Rx, Y, Z = acelerador, freio, embreagem) ou None."""
+    EVIOCGABS = 0x80184540          # _IOR('E', 0x40 + abs, input_absinfo[24])
+    ABS_RX, ABS_Y, ABS_Z = 0x03, 0x01, 0x02
+
+    alvo = "v%08Xp%08X" % (VID, PID)
+    for caminho in sorted(glob.glob("/sys/class/input/input*")):
+        try:
+            with open(os.path.join(caminho, "device", "modalias")) as f:
+                if alvo.lower() not in f.read().strip().lower():
+                    continue
+            # so o no' dos pedais de verdade (3 eixos), nao o canal vendor
+            with open(os.path.join(caminho, "capabilities", "abs")) as f:
+                if f.read().strip() != "e":
+                    continue
+        except OSError:
+            continue
+        evs = glob.glob(os.path.join(caminho, "event*"))
+        if not evs:
+            continue
+        dev = "/dev/input/" + os.path.basename(evs[0])
+        try:
+            fd = os.open(dev, os.O_RDONLY)
+        except OSError:
+            return None
+        try:
+            vals = []
+            for code in (ABS_RX, ABS_Y, ABS_Z):
+                buf = bytearray(24)
+                fcntl.ioctl(fd, EVIOCGABS + code, buf)
+                vals.append(struct.unpack_from("<i", buf, 0)[0])
+            return vals
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+    return None
+
+
 def uhid_input(fd, dados):
     os.write(fd, struct.pack("<IH", UHID_INPUT2, len(dados)) + dados)
+
+
+def semear_eixos(fd, args, quieto=False):
+    """Manda um relatorio com a posicao atual dos pedais."""
+    pos = ler_posicao_atual()
+    if not pos:
+        if not quieto:
+            print("AVISO: nao consegui ler a posicao atual pelo evdev")
+        return
+    vals = [max(0, min(4095, pos[i])) for i in args.ordem]
+
+    # Manda DUAS vezes, a primeira com o valor deslocado. O evdev suprime
+    # valor repetido: sem a transicao o kernel nao gera evento nenhum, e o
+    # Wine -- que le o evdev, nao o nosso relatorio -- fica eternamente no
+    # default de meio curso.
+    #
+    # O deslocamento tem de ser MAIOR QUE O FUZZ do eixo, senao o kernel
+    # filtra a mudanca e nao gera evento. Com a regra udev instalada o
+    # device virtual fica com fuzz 0, entao 1 basta -- e 1 e' imperceptivel
+    # (0,02% do curso). Sem a regra, o fuzz default e' 15 e a semeadura nao
+    # funciona: o check-setup.sh avisa.
+    PERT = 1
+    pert = [v + PERT if v < 4095 - PERT else v - PERT for v in vals]
+    for conjunto in (pert, vals):
+        uhid_input(fd, bytes([1]) + b"".join(
+            struct.pack("<H", v) for v in conjunto))
+    if not quieto:
+        print("posicao semeada: %s" % pos)
 
 
 def sessao(args, dev_real, sysfs):
@@ -209,12 +290,18 @@ def sessao(args, dev_real, sysfs):
     uhid_eixos = None
     if args.eixos:
         uhid_eixos = os.open("/dev/uhid", os.O_RDWR)
-        uhid_criar(uhid_eixos, RD_EIXOS, NOME_EIXOS, "shim-eixos")
+        maximo = min(0xFFFF, 4095 * max(1, args.escala))
+        uhid_criar(uhid_eixos, rd_eixos(maximo), NOME_EIXOS, "shim-eixos")
+        print("escala do eixo: logical max %d (fator %d) -> curso inteiro do "
+              "pedal ocupa 1/%d do DIJOYSTATE2"
+              % (maximo, args.escala, args.escala))
         print("joystick virtual criado (%s): lX<-campo%d  lY<-campo%d  "
               "lZ<-campo%d" % ((NOME_EIXOS,) + args.ordem))
+        semear_eixos(uhid_eixos, args)
     print("Ctrl-C para remover.\n")
 
     n_in = n_out = n_eixos = 0
+    ultimo_ka = 0.0
     voltar = False
     try:
         while not PARAR[0]:
@@ -247,8 +334,29 @@ def sessao(args, dev_real, sysfs):
                     uhid_input(uhid_eixos, rep)
                     n_eixos += 1
 
+            # Mantem o eixo vivo. A pedaleira nao transmite em repouso, e o
+            # Wine so atualiza o DIJOYSTATE2 quando chega evento no evdev:
+            # sem isto os eixos ficam no default de meio curso (32767), que
+            # o app le como posicao real -- com escala 4 isso e' 200%, e a
+            # barra nasce estourada. Medido em 2026-08-14.
+            # ⚠️ O relogio e' proprio, NAO "tempo desde o ultimo relatorio
+            # repassado": a pedaleira transmite continuamente mesmo parada,
+            # sempre com o mesmo valor. O kernel suprime valor repetido (nao
+            # gera evento) e, se o keepalive dependesse do fluxo de
+            # relatorios, ele nunca dispararia. Custou uma rodada.
+            if uhid_eixos and time.time() - ultimo_ka > 1.0:
+                semear_eixos(uhid_eixos, args, quieto=True)
+                ultimo_ka = time.time()
+
             if uhid_eixos and uhid_eixos in r:
-                os.read(uhid_eixos, EV_BUF)   # o app so le; nada a fazer
+                buf = os.read(uhid_eixos, EV_BUF)
+                buf += b"\x00" * (EV_BUF - len(buf))
+                if struct.unpack_from("<I", buf, 0)[0] == UHID_OPEN:
+                    # Quem abre (o winedevice) so recebe relatorios dai em
+                    # diante, e a pedaleira nao transmite em repouso: sem
+                    # semear aqui, os eixos ficam no default de meio curso
+                    # ate alguem pisar em algo.
+                    semear_eixos(uhid_eixos, args)
 
             if uhid in r:                        # app -> pedal
                 buf = os.read(uhid, EV_BUF)
@@ -314,6 +422,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="mostra cada relatorio repassado")
+    ap.add_argument("--escala", type=int, default=1,
+                    help="fator de escala do eixo virtual (padrao 1). O Wine "
+                         "mapeia o Logical Maximum declarado para 0..65535 do "
+                         "DIJOYSTATE2, e o ConspitLink satura em ~16384; "
+                         "declarar 4x faria o curso inteiro do pedal cair "
+                         "dentro dessa faixa -- NAO validado, ver CLAUDE.md. "
+                         "1 = escala crua (padrao).")
     ap.add_argument("--sem-eixos", dest="eixos", action="store_false",
                     help="nao criar o joystick virtual de eixos permutados")
     ap.add_argument("--ordem", default=",".join(str(i) for i in ORDEM_PADRAO),
