@@ -344,6 +344,29 @@ hardware. Depois do nó, `/dev/ttyACM2` aparece aberto pelo processo.
 ⚠️ COM33 e não COM3: o `wineboot` preenche `com1`..`com32` varrendo `/dev/ttyS*` e
 sobrescreve qualquer symlink nessa faixa.
 
+⚠️ **A base fica mapeada DUAS vezes, e isso é esperado** (medido em 2026-08-15). O
+`wineboot` também mapeia `/dev/ttyACM*`, logo acima da faixa dos `ttyS*`:
+
+```
+com33 -> /dev/serial/by-id/usb-CONSPIT_CONSPIT_ARES_<serial>-if00   (nosso, estável)
+com34 -> /dev/ttyACM0    a MESMA base, por número cru
+com35 -> /dev/ttyACM1    a CDC do volante H.AO
+```
+
+Não é problema **porque só a COM33 tem nó PnP com VID/PID**: o `SERIALCOMM` lista todas, mas
+o `wmic path Win32_PnPEntity` devolve só `USB\VID_3514&PID_0301\<serial> ... (COM33)`. O
+`QSerialPortInfo` filtra por VID/PID, então o app escolhe a COM33 de forma determinística.
+
+Três consequências que importam:
+
+1. **Não adianta apagar os symlinks extras** — o `wineboot` os recria. Pelo mesmo mecanismo,
+   a COM33 se auto-repara: ela é recriada a partir de `HKLM\Software\Wine\Ports\COM33`,
+   e é por isso que o setup escreve nos dois lugares.
+2. **`dosdevices` é por prefixo.** O mapeamento de outro prefixo (SimHub, um jogo, o projeto
+   irmão do pedal) não alcança este — não há colisão entre projetos.
+3. **Suspeito do `The base port is occupied`:** qualquer coisa que varra e abra todas as
+   portas abriria a COM34, que é a mesma base, gerando conflito de handle.
+
 ### Estado atual e o que falta
 
 **O ConspitLink 2.0 funciona sob Wine, com controle da base em tempo real.** Confirmado na
