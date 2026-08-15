@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Prepara um prefixo Wine para o ConspitLink 2.0 enxergar a base Ares.
+"""Prepara um prefixo Wine para o ConspitLink 2.0 enxergar os devices Conspit.
 
-Problema: o Wine expoe portas seriais como dispositivos genericos, sem
-VID/PID de USB. O `QSerialPortInfo` do Qt (que o ConspitLink usa, via
-Qt5SerialPort.dll) enumera pela classe `Ports` do SetupAPI, tira o nome da
-porta de `Device Parameters\\PortName` e o VID/PID do device instance ID.
-Sem um no na arvore PnP, a base simplesmente nao aparece na lista dele.
+Faz duas coisas independentes:
 
-A arvore de dispositivos do Wine e' registro puro, em
-HKLM\\System\\CurrentControlSet\\Enum -- nada impede a gente de registrar
-o no que falta, com o VID/PID reais lidos do udev (nao inventados).
+1. REGISTRA A PORTA SERIAL NA ARVORE PnP (configuracao da base)
+   O Wine expoe portas seriais como dispositivos genericos, sem VID/PID de
+   USB. O `QSerialPortInfo` do Qt (que o ConspitLink usa, via
+   Qt5SerialPort.dll) enumera pela classe `Ports` do SetupAPI, tira o nome
+   da porta de `Device Parameters\\PortName` e o VID/PID do device instance
+   ID. Sem um no na arvore PnP, a base simplesmente nao aparece na lista.
 
-Tecnica herdada de ~/apps/diy-ffb-pedal-linux/pedal_wine_setup.py (secao 11.3
-do CLAUDE.md de la), adaptada de .NET/WMI para Qt/SetupAPI.
+2. POE O winebus NO BACKEND hidraw (telemetria, pedais, volantes)
+   Sem isto o Wine entrega os devices HID sintetizados pelo SDL, que tem
+   UMA collection so -- os canais vendor de 64 bytes (pedais, volantes) e a
+   collection de comandos da base nao existem, e o app nao ve nada alem do
+   basico. Ver "O backend do winebus" no CLAUDE.md.
 
     python3 tools/conspit_wine_setup.py
     python3 tools/conspit_wine_setup.py --verificar
     python3 tools/conspit_wine_setup.py --desfazer
+
+⚠️ RODE DE NOVO ao ligar um device Conspit novo: a lista `EnableHidraw` e'
+montada a partir do que esta no barramento. (O `Enable SDL=0` cobre o caso
+mesmo sem re-rodar, mas a lista explicita e' o que documenta a intencao.)
 """
 import argparse
 import glob
@@ -39,6 +45,21 @@ COM_PADRAO = 33
 
 VID_CONSPIT = "3514"
 PID_ARES = "0301"
+
+# ⚠️ A CHAVE E' `Services\winebus`, NAO `Services\winebus\Parameters`.
+#
+# Esta e' a correcao mais importante deste script. O `check_bus_option` do
+# winebus.sys carrega o comentario de documentacao do proprio Wine:
+#
+#     /* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */
+#
+# ou seja, ele le os valores direto em `Services\winebus`. Ate 2026-08-15
+# este script escrevia em `...\winebus\Parameters`, uma subchave que o
+# driver NUNCA consulta -- entao todas as opcoes eram silenciosamente
+# ignoradas e o backend continuava no SDL. Isso invalidou varias medicoes
+# antigas; ver "A chave errada" no CLAUDE.md.
+CHAVE_WINEBUS = r"HKLM\System\CurrentControlSet\Services\winebus"
+CHAVE_WINEBUS_LEGADA = CHAVE_WINEBUS + r"\Parameters"
 
 
 def wine(prefixo, *args, checar=True, timeout=180):
@@ -74,11 +95,47 @@ def detectar_base():
     if not achados:
         sys.exit("Nenhuma interface serial Conspit encontrada.\n"
                  "A base esta ligada? Confira com: ls -l /dev/serial/by-id/")
+
+    # ⚠️ A BASE NAO E' A UNICA COM CDC. Descoberto em 2026-08-15: o volante
+    # H.AO (0007) tambem expoe uma porta serial. Escolher "a primeira" da
+    # lista so acertava por acidente da ordem alfabetica (ARES < H.AO) --
+    # basta um device novo com nome antes de "ARES" para o script registrar
+    # a porta errada, e o app nao acharia a base. Selecionar pelo PID.
+    da_base = [a for a in achados if a["pid"].lower() == PID_ARES]
     if len(achados) > 1:
-        print("Mais de uma porta Conspit; usando a primeira:")
+        print("Mais de uma porta serial Conspit no barramento:")
         for a in achados:
-            print(f"  {a['vid']}:{a['pid']}  {a['modelo']}  ({a['dev']})")
-    return achados[0]
+            marca = "  <- base, escolhida" if a in da_base[:1] else ""
+            print(f"  {a['vid']}:{a['pid']}  {a['modelo']}  ({a['dev']}){marca}")
+        print()
+    if not da_base:
+        sys.exit(f"Nenhuma porta serial com PID {PID_ARES} (a base Ares).\n"
+                 "A base esta ligada?")
+    return da_base[0]
+
+
+def detectar_conspit_usb():
+    """Todos os devices Conspit no barramento, para a lista EnableHidraw.
+
+    Devolve [(pid, nome)] ordenado por pid, sem repeticao."""
+    vistos = {}
+    for d in sorted(glob.glob("/sys/bus/usb/devices/*")):
+        try:
+            with open(os.path.join(d, "idVendor")) as f:
+                if f.read().strip().lower() != VID_CONSPIT:
+                    continue
+            with open(os.path.join(d, "idProduct")) as f:
+                pid = f.read().strip().lower()
+        except OSError:
+            continue
+        nome = ""
+        try:
+            with open(os.path.join(d, "product")) as f:
+                nome = f.read().strip()
+        except OSError:
+            pass
+        vistos.setdefault(pid, nome)
+    return sorted(vistos.items())
 
 
 def chave_enum(b):
@@ -86,7 +143,70 @@ def chave_enum(b):
             rf"\VID_{b['vid']}&PID_{b['pid']}\{b['serial']}")
 
 
-def configurar(prefixo, b, com):
+def configurar_backend(prefixo, devices):
+    """Poe o winebus no backend hidraw para os devices Conspit.
+
+    Duas chaves, com papeis diferentes e complementares:
+
+    `Enable SDL` = 0
+        Desliga o backend SDL. No winebus.sys isso tem um efeito em
+        cascata que e' justamente o que se quer:
+
+            if (!sdl_driver_init()) options.disable_input = TRUE;
+
+        ou seja, SDL desligado tambem desliga o backend evdev do udev. E
+        entao, dentro de is_hidraw_enabled():
+
+            if (options.disable_sdl && options.disable_input)
+                prefer_hidraw = TRUE;
+
+        -> QUALQUER joystick passa a vir por hidraw, inclusive um device
+        Conspit ligado depois deste script rodar. E' a rede de seguranca.
+
+        ⚠️ Vale para o prefixo inteiro. Como este prefixo so roda o
+        ConspitLink, tudo bem; num prefixo de jogos, um controle sem ACL
+        de hidraw sumiria.
+
+    `EnableHidraw` = lista "VID:PID"
+        Marca explicitamente cada device Conspit presente. Redundante com
+        o item acima, de proposito: documenta a intencao e continua
+        funcionando se alguem religar o SDL. O formato vem do proprio
+        winebus.sys:
+
+            UINT len = swprintf(vidpid, ARRAY_SIZE(vidpid), L"%04X:%04X", vid, pid);
+            if (!wcsnicmp(tmp, vidpid, len)) prefer_hidraw = TRUE;
+
+        REG_MULTI_SZ, uma entrada por device, comparacao sem case.
+    """
+    print("\n3. Poe o winebus no backend hidraw...")
+
+    # Limpa a subchave errada que este script usou ate 2026-08-15. Deixa-la
+    # para tras nao quebra nada (o driver nao le), mas confunde quem for
+    # diagnosticar depois.
+    r = wine(prefixo, "reg", "query", CHAVE_WINEBUS_LEGADA, checar=False)
+    if r.returncode == 0:
+        wine(prefixo, "reg", "delete", CHAVE_WINEBUS_LEGADA, "/f", checar=False)
+        print(r"   removida a subchave legada \Parameters (o driver nao a le)")
+
+    wine(prefixo, "reg", "add", CHAVE_WINEBUS, "/v", "Enable SDL",
+         "/t", "REG_DWORD", "/d", "0", "/f")
+    print("   Enable SDL = 0   (tambem desliga o backend evdev; ver docstring)")
+
+    if devices:
+        lista = [f"{VID_CONSPIT}:{pid}" for pid, _ in devices]
+        # `wine reg` usa a sequencia literal \0 como separador de REG_MULTI_SZ
+        wine(prefixo, "reg", "add", CHAVE_WINEBUS, "/v", "EnableHidraw",
+             "/t", "REG_MULTI_SZ", "/d", "\\0".join(lista), "/f")
+        print("   EnableHidraw:")
+        for (pid, nome), entrada in zip(devices, lista):
+            print(f"     {entrada}  {nome}")
+    else:
+        print("   (nenhum device Conspit no barramento; lista nao escrita)")
+
+    print("   requer /dev/hidraw* acessivel -- ver udev/70-conspit.rules")
+
+
+def configurar(prefixo, b, com, devices):
     nome = f"{b['modelo']} (COM{com})"
     k = chave_enum(b)
 
@@ -125,28 +245,7 @@ def configurar(prefixo, b, com):
          "/t", "REG_SZ", "/d", b["link"], "/f")
     print(rf"   HKLM\Software\Wine\Ports\COM{com} = {b['link']}")
 
-    # 3) Backend HID. O ConspitLink usa hidapi.dll para o canal proprietario
-    #    (temperaturas, estado do motor, dash). O winebus do Wine tem dois
-    #    backends: SDL, que sintetiza um descritor generico de joystick, e
-    #    hidraw, que entrega o descritor REAL -- incluindo a collection
-    #    vendor-defined (report ID 0xA1) que o ConspitLink precisa.
-    #    Com SDL ativo o app enumera o dispositivo (aparece "Online") mas
-    #    nao consegue trocar relatorios vendor: e' o cenario dos campos
-    #    zerados. Este prefixo so roda o ConspitLink, entao desligar SDL aqui
-    #    nao afeta mais nada.
-    #    ⚠️ `DisableInput=1` foi TENTADO em 2026-08-12 e NAO ajudou: o
-    #    winedevice.exe continuou abrindo /dev/input/event* junto do hidraw, e o
-    #    angulo do volante continuou travado. Nao readicionar sem evidencia
-    #    nova. (Os nomes validos, extraidos do proprio winebus.sys: EnableHidraw,
-    #    DisableHidraw, DisableInput, DisableUdevd, "Enable SDL",
-    #    "Map Controllers".)
-    print("\n3. Configurando o winebus para usar o backend hidraw...")
-    par = r"HKLM\System\CurrentControlSet\Services\winebus\Parameters"
-    for valor, dado in [("Enable SDL", "0"), ("DisableHidraw", "0")]:
-        wine(prefixo, "reg", "add", par, "/v", valor, "/t", "REG_DWORD",
-             "/d", dado, "/f")
-        print(f"   {valor} = {dado}")
-    print("   (requer /dev/hidraw* acessivel -- ver udev/70-conspit.rules)")
+    configurar_backend(prefixo, devices)
 
     # Symlink por ultimo: `wine reg` pode disparar um wineboot que recria os
     # symlinks a partir do registro, sobrescrevendo o que criassemos antes.
@@ -157,10 +256,10 @@ def configurar(prefixo, b, com):
     # by-id e nao /dev/ttyACMx: o numero renumera quando o kernel reenumera, e
     # o symlink quebra em silencio.
     os.symlink(b["link"], alvo)
-    print(f"   dosdevices/com{com} -> {b['link']}")
+    print(f"\n   dosdevices/com{com} -> {b['link']}")
 
 
-def verificar(prefixo, com):
+def verificar(prefixo, com, devices):
     print("\n4. Verificando...")
     ok = True
 
@@ -178,6 +277,28 @@ def verificar(prefixo, com):
     else:
         print(f"   !! COM{com} ausente do SERIALCOMM")
         ok = False
+
+    # backend do winebus
+    r = wine(prefixo, "reg", "query", CHAVE_WINEBUS, checar=False)
+    if re.search(r"Enable SDL\s+REG_DWORD\s+0x0\b", r.stdout):
+        print("   winebus: Enable SDL = 0  OK")
+    else:
+        print("   !! winebus: 'Enable SDL' nao esta 0 -- o backend continua no SDL")
+        ok = False
+
+    faltando = [f"{VID_CONSPIT}:{pid}" for pid, _ in devices
+                if not re.search(rf"{VID_CONSPIT}:{pid}", r.stdout, re.I)]
+    if not devices:
+        print("   (sem devices Conspit no barramento para conferir)")
+    elif faltando:
+        print(f"   !! EnableHidraw nao lista: {', '.join(faltando)}")
+        ok = False
+    else:
+        print(f"   winebus: EnableHidraw cobre os {len(devices)} device(s)  OK")
+
+    r = wine(prefixo, "reg", "query", CHAVE_WINEBUS_LEGADA, checar=False)
+    if r.returncode == 0:
+        print(r"   !! sobrou a subchave \Parameters (inerte, mas confunde)")
 
     # Mesma query que o wbemprox do Wine responde a partir da arvore Enum.
     try:
@@ -199,6 +320,9 @@ def verificar(prefixo, com):
         print("      wine wmic path Win32_PnPEntity get Name,DeviceID")
 
     print("\n   " + ("tudo certo." if ok else "algo faltou -- veja acima."))
+    if ok:
+        print("   Para conferir o que o app enxerga, compile e rode o "
+              "tools/hidenum.c\n   dentro do prefixo (ver cabecalho do arquivo).")
     return ok
 
 
@@ -208,6 +332,9 @@ def desfazer(prefixo, com):
     wine(prefixo, "reg", "delete", chave_enum(b), "/f", checar=False)
     wine(prefixo, "reg", "delete", r"HKLM\Software\Wine\Ports", "/v",
          f"COM{com}", "/f", checar=False)
+    for valor in ("Enable SDL", "EnableHidraw"):
+        wine(prefixo, "reg", "delete", CHAVE_WINEBUS, "/v", valor, "/f",
+             checar=False)
     alvo = os.path.join(prefixo, "dosdevices", f"com{com}")
     if os.path.islink(alvo):
         os.remove(alvo)
@@ -226,16 +353,16 @@ def main():
     if not os.path.isdir(a.prefixo):
         sys.exit(f"prefixo nao existe: {a.prefixo}")
 
+    devices = detectar_conspit_usb()
+
     if a.desfazer:
         desfazer(a.prefixo, a.com)
     elif a.verificar:
-        sys.exit(0 if verificar(a.prefixo, a.com) else 1)
+        sys.exit(0 if verificar(a.prefixo, a.com, devices) else 1)
     else:
-        configurar(a.prefixo, detectar_base(), a.com)
-        verificar(a.prefixo, a.com)
+        configurar(a.prefixo, detectar_base(), a.com, devices)
+        verificar(a.prefixo, a.com, devices)
 
 
 if __name__ == "__main__":
     main()
-
-
