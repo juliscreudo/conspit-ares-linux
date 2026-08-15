@@ -315,8 +315,16 @@ else
   # Backend do winebus. Sem isto o Wine entrega devices HID sintetizados pelo
   # SDL, com UMA collection so: os canais vendor (pedais, volantes) e a
   # collection de comandos da base simplesmente nao existem para o app.
-  if grep -q '"Enable SDL"=dword:00000000' "$reg" 2>/dev/null; then
-    ok "winebus no backend hidraw (Enable SDL=0)"
+  if grep -q '"EnableHidraw"' "$reg" 2>/dev/null; then
+    ok "winebus no backend hidraw (EnableHidraw presente)"
+    if grep -q '"Enable SDL"=dword:00000000' "$reg" 2>/dev/null \
+       && grep -q '"DisableInput"=dword:00000001' "$reg" 2>/dev/null; then
+      ok "rede de seguranca ativa (Enable SDL=0 + DisableInput=1)"
+    else
+      aviso "rede de seguranca incompleta -- so' funciona com os DOIS valores" \
+            "um device Conspit novo pode nascer sintetizado ate voce rodar:
+             python3 $repo/tools/conspit_wine_setup.py"
+    fi
   else
     falha "winebus NAO esta no backend hidraw" \
           "o app abre, mas nao ve pedais nem volantes, e a telemetria da base
@@ -335,7 +343,7 @@ else
   fi
 
   # Cada device presente deve estar no EnableHidraw. Nao e' obrigatorio
-  # (o Enable SDL=0 ja cobre), mas e' o que documenta a intencao.
+  # (a rede de seguranca ja cobre), mas e' o que documenta a intencao.
   if [[ $com_hw -eq 1 ]]; then
     faltando=()
     for pid in "${pids_presentes[@]}"; do
@@ -345,7 +353,7 @@ else
       ok "EnableHidraw cobre os ${#pids_presentes[@]} device(s) presentes"
     else
       aviso "EnableHidraw nao lista: ${faltando[*]}" \
-            "deve funcionar assim mesmo (Enable SDL=0 cobre), mas para
+            "deve funcionar assim mesmo (rede de seguranca cobre), mas para
              registrar: python3 $repo/tools/conspit_wine_setup.py"
     fi
   fi

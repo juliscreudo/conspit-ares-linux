@@ -63,14 +63,17 @@ fi
 # O backend hidraw e' o que faz o app enxergar os canais vendor (pedais,
 # volantes) e a collection de comandos da base. Sem ele o app abre, mas so
 # ve o basico -- falha confusa, entao e' melhor avisar aqui.
-if ! grep -q '"Enable SDL"=dword:00000000' "$WINEPREFIX/system.reg" 2>/dev/null; then
+# A lista EnableHidraw e' quem de fato poe cada device em hidraw. O par
+# Enable SDL=0 + DisableInput=1 e' a rede de seguranca -- e so' funciona
+# COM OS DOIS (medido em 2026-08-15; ver o docstring do conspit_wine_setup).
+if ! grep -q '"EnableHidraw"' "$WINEPREFIX/system.reg" 2>/dev/null; then
   echo "AVISO: o winebus deste prefixo nao esta no backend hidraw." >&2
   echo "  os canais vendor (pedais, volantes) nao vao aparecer no app." >&2
   echo "  corrija com: python3 $repo/tools/conspit_wine_setup.py" >&2
 fi
 
 # Um device Conspit ligado depois do setup nao esta na lista EnableHidraw.
-# O `Enable SDL=0` cobre o caso, mas a lista e' o que documenta a intencao --
+# A rede de seguranca cobre o caso, mas a lista e' o que documenta a intencao --
 # e conferir e' barato.
 if command -v lsusb >/dev/null; then
   while read -r pid; do

@@ -261,6 +261,60 @@ desligado por política.
 - **Rótulos dos pedais rotacionados** — o Wine não sintetiza mais o device a partir do
   evdev, então a ordenação por código de eixo deixou de existir; vale a ordem do descritor.
 
+### Epílogo: a diretiva do `Enable SDL=0` também estava errada (2026-08-15, noite)
+
+Ao investigar por que o **SimHub** não enxergava o volante H.AO, apareceu um fato
+incômodo: o prefixo dele **já tinha `Enable SDL=0` na chave certa** e mesmo assim os
+devices saíam sintetizados.
+
+O CLAUDE.md afirmava, com trecho de código junto, que `Enable SDL=0` sozinho bastava porque
+"SDL desligado também desliga o evdev". O raciocínio estava **invertido**:
+
+```c
+if (!sdl_driver_init()) options.disable_input = TRUE;
+```
+
+`sdl_driver_init()` devolve `STATUS_SUCCESS` (=0) quando dá certo — então o `!` liga o
+`disable_input` quando o SDL **funciona** (para não duplicar device). Com `Enable SDL=0` a
+função devolve `STATUS_NOT_SUPPORTED` (≠0), o `disable_input` fica FALSE, e o backend evdev
+continua sintetizando.
+
+Experimento controlado no prefixo do ConspitLink, com `hidenum` a cada passo:
+
+| configuração | resultado |
+|---|---|
+| `EnableHidraw` + `Enable SDL=0` (o que estava em uso) | devices reais (`0x04` + `0x3A`) |
+| só `Enable SDL=0` | **sintetizados** (`usage 0x05`, `out 0`, sem canal vendor) |
+| `Enable SDL=0` + `DisableInput=1` | devices reais, **sem precisar da lista** |
+
+Ou seja: quem sempre fez o trabalho foi a **lista `EnableHidraw`**; a rede de segurança
+existe, mas exige **os dois** valores. O `DisableInput` chegou a estar na lista de "não
+reintroduzir" — herança da época em que era escrito na subchave `Parameters` e portanto
+nunca havia sido testado de fato.
+
+Correção aplicada em `conspit_wine_setup.py` (passa a escrever os três valores),
+`check-setup.sh` (verifica os três, e avisa se a rede de segurança estiver pela metade),
+`run-conspitlink.sh` (o pre-flight passa a olhar o `EnableHidraw`) e no CLAUDE.md.
+
+**Padrão que se repete neste projeto:** a conclusão errada não veio de má medição, veio de
+ler o código com o sinal trocado e nunca testar a hipótese isoladamente. As duas vezes que
+isso aconteceu (a chave `Parameters`, e agora o `Enable SDL`), o desempate foi o mesmo:
+mudar **uma** variável por vez e medir com o `hidenum`.
+
+### SimHub e o H.AO — resolvido pela mesma correção
+
+Com `EnableHidraw` gravado no prefixo do SimHub e o wineserver reiniciado, o volante passa a
+expor as duas collections lá também:
+
+```
+3514:0007 usage 0x04 in 52 out 11    joystick
+3514:0007 usage 0x3A in 64 out 64    canal vendor -- e' por aqui que os LEDs sao escritos
+```
+
+Antes: `usage 0x05, in 26, out 0` — sem canal vendor e sem nenhum output report, ou seja,
+sem como escrever LED. A parte do SimHub (perfis, telemetria) é território do
+linux-simracing-utils; o que faltava era o Wine entregar o device real.
+
 ### Validação na GUI (2026-08-15)
 
 - Base: ângulo em tempo real (`-449.31°` na tela com o volante girado).

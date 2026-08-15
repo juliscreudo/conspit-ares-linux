@@ -21,7 +21,7 @@ Faz duas coisas independentes:
     python3 tools/conspit_wine_setup.py --desfazer
 
 ⚠️ RODE DE NOVO ao ligar um device Conspit novo: a lista `EnableHidraw` e'
-montada a partir do que esta no barramento. (O `Enable SDL=0` cobre o caso
+montada a partir do que esta no barramento. (A rede de seguranca cobre o caso
 mesmo sem re-rodar, mas a lista explicita e' o que documenta a intencao.)
 """
 import argparse
@@ -159,35 +159,44 @@ def configurar_backend(prefixo, devices):
 
     Duas chaves, com papeis diferentes e complementares:
 
-    `Enable SDL` = 0
-        Desliga o backend SDL. No winebus.sys isso tem um efeito em
-        cascata que e' justamente o que se quer:
-
-            if (!sdl_driver_init()) options.disable_input = TRUE;
-
-        ou seja, SDL desligado tambem desliga o backend evdev do udev. E
-        entao, dentro de is_hidraw_enabled():
-
-            if (options.disable_sdl && options.disable_input)
-                prefer_hidraw = TRUE;
-
-        -> QUALQUER joystick passa a vir por hidraw, inclusive um device
-        Conspit ligado depois deste script rodar. E' a rede de seguranca.
-
-        ⚠️ Vale para o prefixo inteiro. Como este prefixo so roda o
-        ConspitLink, tudo bem; num prefixo de jogos, um controle sem ACL
-        de hidraw sumiria.
-
     `EnableHidraw` = lista "VID:PID"
-        Marca explicitamente cada device Conspit presente. Redundante com
-        o item acima, de proposito: documenta a intencao e continua
-        funcionando se alguem religar o SDL. O formato vem do proprio
-        winebus.sys:
+        E' QUEM FAZ O TRABALHO. Marca explicitamente cada device Conspit
+        presente. Formato do proprio winebus.sys:
 
             UINT len = swprintf(vidpid, ARRAY_SIZE(vidpid), L"%04X:%04X", vid, pid);
             if (!wcsnicmp(tmp, vidpid, len)) prefer_hidraw = TRUE;
 
         REG_MULTI_SZ, uma entrada por device, comparacao sem case.
+
+    `Enable SDL` = 0  +  `DisableInput` = 1
+        A rede de seguranca, e SO' FUNCIONA COM OS DOIS JUNTOS:
+
+            if (options.disable_sdl && options.disable_input)
+                prefer_hidraw = TRUE;
+
+        -> qualquer joystick passa a vir por hidraw, inclusive um device
+        Conspit ligado depois deste script rodar.
+
+        ⚠️ Ate 2026-08-15 este arquivo afirmava que `Enable SDL=0`
+        SOZINHO bastava, porque "SDL desligado tambem desliga o evdev":
+
+            if (!sdl_driver_init()) options.disable_input = TRUE;
+
+        Isso esta' invertido. `sdl_driver_init()` devolve STATUS_SUCCESS
+        (=0) quando da' certo, entao o `!` liga o disable_input quando o
+        SDL FUNCIONA (para nao duplicar device). Com `Enable SDL=0` ele
+        devolve STATUS_NOT_SUPPORTED (!=0) e o disable_input fica FALSE
+        -- o backend evdev continua ativo e sintetiza os devices.
+
+        MEDIDO em 2026-08-15, removendo o EnableHidraw e reiniciando o
+        wineserver: com so' `Enable SDL=0` os devices voltam a sair
+        sintetizados (usage 0x05, out 0, sem canal vendor). Com os dois,
+        saem reais (usage 0x04 + 0x3A). Foi o mesmo sintoma do prefixo do
+        SimHub, que tinha `Enable SDL=0` e nao enxergava o volante.
+
+        ⚠️ Vale para o prefixo inteiro. Como este prefixo so roda o
+        ConspitLink, tudo bem; num prefixo de jogos, um controle sem ACL
+        de hidraw sumiria.
     """
     print("\n3. Poe o winebus no backend hidraw...")
 
@@ -199,9 +208,13 @@ def configurar_backend(prefixo, devices):
         wine(prefixo, "reg", "delete", CHAVE_WINEBUS_LEGADA, "/f", checar=False)
         print(r"   removida a subchave legada \Parameters (o driver nao a le)")
 
-    wine(prefixo, "reg", "add", CHAVE_WINEBUS, "/v", "Enable SDL",
-         "/t", "REG_DWORD", "/d", "0", "/f")
-    print("   Enable SDL = 0   (tambem desliga o backend evdev; ver docstring)")
+    # Os dois juntos: e' a combinacao que liga prefer_hidraw para qualquer
+    # joystick. Um sozinho nao faz nada -- ver docstring.
+    for valor in ("Enable SDL", "DisableInput"):
+        dado = "0" if valor == "Enable SDL" else "1"
+        wine(prefixo, "reg", "add", CHAVE_WINEBUS, "/v", valor,
+             "/t", "REG_DWORD", "/d", dado, "/f")
+    print("   Enable SDL = 0 + DisableInput = 1   (rede de seguranca; so' juntos)")
 
     if devices:
         lista = [f"{VID_CONSPIT}:{pid}" for pid, _ in devices]
@@ -411,7 +424,7 @@ def desfazer(prefixo, com):
     wine(prefixo, "reg", "delete", chave_enum(b), "/f", checar=False)
     wine(prefixo, "reg", "delete", r"HKLM\Software\Wine\Ports", "/v",
          f"COM{com}", "/f", checar=False)
-    for valor in ("Enable SDL", "EnableHidraw"):
+    for valor in ("Enable SDL", "DisableInput", "EnableHidraw"):
         wine(prefixo, "reg", "delete", CHAVE_WINEBUS, "/v", valor, "/f",
              checar=False)
     alvo = os.path.join(prefixo, "dosdevices", f"com{com}")

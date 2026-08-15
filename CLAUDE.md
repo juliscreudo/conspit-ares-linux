@@ -129,14 +129,30 @@ Configuração canônica, em `HKLM\System\CurrentControlSet\Services\winebus`:
 
 | valor | tipo | papel |
 |---|---|---|
-| `Enable SDL` | `REG_DWORD` `0` | rede de segurança: tudo vira hidraw, inclusive device novo |
-| `EnableHidraw` | `REG_MULTI_SZ` | lista `3514:xxxx` (4 díg. hex, case-insensitive) dos devices presentes |
+| `EnableHidraw` | `REG_MULTI_SZ` | **é quem faz o trabalho**: lista `3514:xxxx` (4 díg. hex, sem case) dos devices |
+| `Enable SDL` | `REG_DWORD` `0` | metade da rede de segurança |
+| `DisableInput` | `REG_DWORD` `1` | a outra metade — **só funciona com as duas** |
 
-Como o driver decide (wine-11.15, `dlls/winebus.sys/main.c`): `Enable SDL=0` faz
-`sdl_driver_init()` falhar → liga `disable_input` → `disable_sdl && disable_input` põe
-**qualquer** joystick em hidraw. Não há dedup entre backends: cada um cria o device e
-`is_hidraw_enabled` rejeita o que não bate (as linhas `ignoring non-hidraw device` no trace
-são normais).
+⚠️ **Corrigido em 2026-08-15: `Enable SDL=0` sozinho NÃO basta.** Este arquivo afirmava que
+ele "desliga o evdev junto" e seria rede de segurança por si só. O raciocínio estava
+invertido:
+
+```c
+if (!sdl_driver_init()) options.disable_input = TRUE;
+```
+
+`sdl_driver_init()` devolve `STATUS_SUCCESS` (=0) quando **dá certo**, então o `!` liga o
+`disable_input` quando o SDL **funciona** (para não duplicar device). Com `Enable SDL=0` ele
+devolve `STATUS_NOT_SUPPORTED` (≠0) e o `disable_input` fica **FALSE** — o backend evdev
+segue ativo e sintetiza os devices.
+
+**Medido** (removendo o `EnableHidraw` e reiniciando o wineserver): só com `Enable SDL=0` os
+devices voltam a sair sintetizados (`usage 0x05`, `out 0`, sem canal vendor). Com
+`Enable SDL=0` **+** `DisableInput=1`, saem reais (`usage 0x04` + `0x3A`). Foi o mesmo
+sintoma do prefixo do SimHub, que tinha só o primeiro e não enxergava o volante.
+
+Não há dedup entre backends: cada um cria o device e `is_hidraw_enabled` rejeita o que não
+bate (as linhas `ignoring non-hidraw device` no trace são normais).
 
 - ⚠️ **A chave é `Services\winebus`, NÃO `Services\winebus\Parameters`.** O driver nunca lê
   a subchave; escrever lá é ignorado **em silêncio**. Esse erro custou três dias e invalidou
@@ -145,8 +161,11 @@ são normais).
   decisões de backend.
 - ⚠️ **A enumeração tem corrida:** logo após `wineserver -k`, a primeira passada do
   `hidenum` pode não listar tudo. Medir sempre na **segunda**, com ~3 s de intervalo.
-- ⚠️ **Não reintroduzir** o shim de uhid, o joystick virtual nem o `DisableInput` — foram
-  aposentados pela raiz (histórico, Fase 3; código do shim nos commits `ec0ad06..1e29b84`).
+- ⚠️ **Não reintroduzir** o shim de uhid nem o joystick virtual — foram aposentados pela
+  raiz (histórico, Fase 3; código do shim nos commits `ec0ad06..1e29b84`). *(O
+  `DisableInput` também constava desta lista até 2026-08-15, por engano: ele nunca chegou a
+  ser testado de verdade, porque era escrito na subchave errada. Hoje é metade da rede de
+  segurança — ver a tabela acima.)*
 
 ### Steam: o SteamBridge
 
