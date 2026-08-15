@@ -1,102 +1,109 @@
-# Conspit no Linux — base Ares Platinum 20Nm, pedais CPP.LITE, volante H.AO
+# Conspit on Linux — Ares Platinum 20Nm base, CPP.LITE pedals, H.AO wheel
 
-Ferramentas e passo a passo para usar os periféricos **Conspit** no Linux, incluindo o
-**ConspitLink 2.0 rodando sob Wine** com configuração e telemetria em tempo real de todos os
-dispositivos.
+[🇧🇷 Português](README.pt-BR.md) · **🇬🇧 English**
 
-### O que este projeto é — e o que não é
+Tools and a step-by-step guide for using **Conspit** sim-racing gear on Linux, including
+**ConspitLink 2.0 running under Wine** with real-time configuration and telemetry for every
+device.
 
-Isto é **a solução que eu usei** para fazer meus dispositivos Conspit funcionarem no Linux,
-organizada para outra pessoa conseguir repetir.
+### What this project is — and what it is not
 
-**Não portei nada.** Não há driver reescrito, nem software reimplementado, nem versão Linux
-do ConspitLink. O app é o **binário oficial da Conspit, sem modificação**, rodando sob Wine.
-O que este repositório contém é o resultado de **análise, configuração e ajuste**:
+This is **the solution I used** to get my Conspit devices working on Linux, organized so
+that someone else can reproduce it.
 
-- descobrir como cada dispositivo se apresenta ao kernel, e o que o Linux erra por padrão;
-- uma regra `udev` que corrige isso;
-- os ajustes de registro que fazem o Wine entregar o hardware ao app do jeito certo;
-- ferramentas de diagnóstico (quase todas somente de leitura) para você conferir cada etapa;
-- a documentação do que foi medido, **inclusive dos caminhos errados**.
+**Nothing was ported.** There is no rewritten driver, no reimplemented software, no Linux
+build of ConspitLink. The app is the **official, unmodified Conspit binary** running under
+Wine. What this repository contains is the result of **analysis, configuration and
+tuning**:
 
-Nada aqui redistribui software de terceiros. O ConspitLink é da **Conspit** e você o baixa do
-site oficial; o firmware da base é o **[OpenFFBoard](https://github.com/Ultrawipf/OpenFFBoard)**
-(Ultrawipf); a ponte de telemetria é o
-**[Winecarte](https://github.com/srounce/winecarte)** (srounce). O mérito do que funciona é
-em boa parte desses projetos — aqui só se juntou as peças.
+- finding out how each device presents itself to the kernel, and what Linux gets wrong by
+  default;
+- a `udev` rule that fixes that;
+- the registry tweaks that make Wine hand the hardware to the app the way it expects;
+- diagnostic tools (almost all read-only) so you can verify every stage;
+- documentation of what was measured — **including the wrong turns**.
 
-Projeto pessoal, sem garantia nem suporte.
+Nothing here redistributes third-party software. ConspitLink belongs to **Conspit** and you
+download it from their official site; the base firmware is
+**[OpenFFBoard](https://github.com/Ultrawipf/OpenFFBoard)** (Ultrawipf); the telemetry
+bridge is **[Winecarte](https://github.com/srounce/winecarte)** (srounce). Much of the
+credit for what works belongs to those projects — this repo just puts the pieces together.
 
-Validado com o hardware ligado em **Fedora 44** (2026-08-12, Wine 11.14) e em **CachyOS**
-(2026-08-14 e 2026-08-15, kernel 7.1, Wine 11.15). Os comandos de cada distro estão
-indicados onde diferem. Se algo divergir na sua, `tools/check-setup.sh` aponta o quê.
+Personal project, no warranty, no support.
 
-Licenciado sob **[GPL-3.0](LICENSE)**: use, estude, modifique e forke à vontade. Quem
-distribuir uma versão modificada é obrigado a manter o código aberto sob a mesma licença —
-ninguém fecha isto num produto proprietário.
+Validated with the hardware connected on **Fedora 44** (2026-08-12, Wine 11.14) and
+**CachyOS** (2026-08-14 and 2026-08-15, kernel 7.1, Wine 11.15). Distro-specific commands
+are marked where they differ. If something diverges on yours, `tools/check-setup.sh` will
+point at what.
 
-## O que funciona
+Licensed under **[GPL-3.0](LICENSE)**: use it, study it, modify it, fork it. Whoever
+distributes a modified version must keep the source open under the same license — nobody
+closes this into a proprietary product.
 
-| | estado |
+## What works
+
+| | status |
 |---|---|
-| FFB nativo em jogos (via `hid-generic` + `hid-pidff`) | ✅ 40 slots, todos os efeitos condicionais |
-| Zona morta / serrilhado dos eixos (base, pedais, volante) | ✅ corrigido por regra udev |
-| Pedais CPP.LITE nativos, sem Wine (ler, monitorar, calibrar) | ✅ `tools/cpp_pedal.py` |
-| Protocolo de comandos direto pela serial | ✅ documentado e testado |
-| **ConspitLink 2.0 sob Wine** | ✅ config e telemetria em tempo real |
-| ↳ base Ares: torque, range, filtros, presets, ângulo ao vivo | ✅ |
-| ↳ pedais CPP.LITE: curvas, calibração, haptics (`Customize`) | ✅ |
-| ↳ volante H.AO: botões, brilho, dashboard, paddles, Launch Control | ✅ |
-| **Telemetria de jogo → haptics e dash** | ✅ via [Winecarte](https://github.com/srounce/winecarte) — validado no Le Mans Ultimate |
-| ↳ iRacing | ❌ o Winecarte não exporta o mapa do iRacing |
+| Native FFB in games (via `hid-generic` + `hid-pidff`) | ✅ 40 effect slots, all conditional effects |
+| Axis deadzone / jitter (base, pedals, wheel) | ✅ fixed by udev rule |
+| CPP.LITE pedals natively, no Wine (read, monitor, calibrate) | ✅ `tools/cpp_pedal.py` |
+| Command protocol straight over serial | ✅ documented and tested |
+| **ConspitLink 2.0 under Wine** | ✅ config and telemetry in real time |
+| ↳ Ares base: torque, range, filters, presets, live angle | ✅ |
+| ↳ CPP.LITE pedals: curves, calibration, haptics (`Customize`) | ✅ |
+| ↳ H.AO wheel: buttons, brightness, dashboard, paddles, Launch Control | ✅ |
+| **Game telemetry → haptics and dash** | ✅ via [Winecarte](https://github.com/srounce/winecarte) — validated with Le Mans Ultimate |
+| ↳ iRacing | ❌ Winecarte does not export iRacing's memory map |
 
-> **Tem outro periférico Conspit?** (Ares Apex, CPP.EVO/Apex, 290GP, PW1, câmbio, freio de
-> mão.) Boa parte do projeto casa por **vendor**, não por modelo — o volante H.AO funcionou
-> 100% no dia em que foi ligado, sem código específico. Veja
-> [docs/adicionar-dispositivo.md](docs/adicionar-dispositivo.md) para o roteiro de
-> diagnóstico e a matriz do que foi testado.
+> **Have a different Conspit peripheral?** (Ares Apex, CPP.EVO/Apex, 290GP, PW1, shifter,
+> handbrake.) Most of this project matches by **vendor**, not by model — the H.AO wheel
+> worked 100% on the day it was first plugged in, with no device-specific code. See
+> [docs/adicionar-dispositivo.md](docs/adicionar-dispositivo.md) (Portuguese) for the
+> diagnostic walkthrough and the support matrix.
 
-A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
-`3514:0301`. As diretivas técnicas estão em [CLAUDE.md](CLAUDE.md) e o histórico completo
-da investigação em [docs/historico-investigacao.md](docs/historico-investigacao.md); o
-protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md)
-(base) e [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md) (pedais).
+The base is **OpenFFBoard 1.15.0** on `F407VG` hardware with an **ODrive** motor
+controller, custom VID/PID `3514:0301`. Technical directives live in
+[CLAUDE.md](CLAUDE.md) and the full investigation history in
+[docs/historico-investigacao.md](docs/historico-investigacao.md) (both in Portuguese — they
+double as LLM context, see below); the protocol ConspitLink speaks is documented in
+[docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md) (base) and
+[docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md) (pedals).
 
 ---
 
-## O caminho, em 4 passos
+## The path, in 4 steps
 
-| passo | o que resolve | precisa? |
+| step | what it solves | required? |
 |---|---|---|
-| **1 — Regra udev** | zona morta e serrilhado dos eixos; acesso HID | **obrigatório**, mesmo sem Wine |
-| **2 — Verificar o hardware** | confirma que a base responde antes de seguir | recomendado |
-| **3 — ConspitLink sob Wine** | configurar base, pedais e volante pela GUI oficial | opcional |
-| **4 — Telemetria de jogo** | haptics no modo `Customize` e dash do volante | opcional, depende do 3 |
+| **1 — udev rule** | axis deadzone and jitter; HID access | **required**, even without Wine |
+| **2 — Verify the hardware** | confirms the base responds before going on | recommended |
+| **3 — ConspitLink under Wine** | configure base, pedals and wheel with the official GUI | optional |
+| **4 — Game telemetry** | `Customize` haptics and the wheel dash | optional, needs step 3 |
 
-Se você só quer **FFB nos jogos com os eixos corretos**, o Passo 1 basta e você pode parar
-ali. Os passos 3 e 4 existem para ter a configuração e a telemetria como no Windows.
+If all you want is **FFB in games with correct axes**, step 1 is enough and you can stop
+there. Steps 3 and 4 exist to get configuration and telemetry like on Windows.
 
-A qualquer momento, `tools/check-setup.sh` diz onde você está e o que falta.
+At any point, `tools/check-setup.sh` tells you where you are and what is missing.
 
 ---
 
-## Pré-requisitos
+## Prerequisites
 
 ```bash
 git clone https://github.com/juliscreudo/conspit-ares-linux.git ~/apps/conspit-ares-linux
 cd ~/apps/conspit-ares-linux
 ```
 
-### Pacotes
+### Packages
 
-Nada aqui depende de distro; só os nomes dos pacotes mudam.
+Nothing here is distro-specific; only package names change.
 
-| o que | para quê | Fedora | Arch / CachyOS |
+| what | used for | Fedora | Arch / CachyOS |
 |---|---|---|---|
-| `evdev-joystick` | zera fuzz/deadzone (Passo 1) | `linuxconsoletools` | `linuxconsole` |
-| pyserial | ferramentas de diagnóstico (Passo 2) | `python3-pyserial` | `python-pyserial` |
-| Wine | rodar o ConspitLink (Passo 3) | `wine` | `wine` — precisa do repo **multilib** |
-| mingw-w64 *(opcional)* | compilar o `hidenum.exe` de diagnóstico | `mingw64-gcc` | `mingw-w64-gcc` |
+| `evdev-joystick` | zeroing fuzz/deadzone (step 1) | `linuxconsoletools` | `linuxconsole` |
+| pyserial | diagnostic tools (step 2) | `python3-pyserial` | `python-pyserial` |
+| Wine | running ConspitLink (step 3) | `wine` | `wine` — needs the **multilib** repo |
+| mingw-w64 *(optional)* | building the `hidenum.exe` diagnostic | `mingw64-gcc` | `mingw-w64-gcc` |
 
 ```bash
 # Fedora
@@ -106,336 +113,341 @@ sudo dnf install -y linuxconsoletools python3-pyserial python3 git wine
 sudo pacman -S --needed linuxconsole python-pyserial python git wine
 ```
 
-Se algum nome não bater na sua distro, descubra pelo arquivo em vez de adivinhar:
+If a name doesn't match on your distro, find it by file instead of guessing:
 
 ```bash
-pacman -F evdev-joystick          # Arch (precisa de 'pacman -Fy' uma vez)
+pacman -F evdev-joystick          # Arch (needs 'pacman -Fy' once)
 dnf provides '*/evdev-joystick'   # Fedora
 ```
 
-> ⚠️ No Arch, **não** use `pip install pyserial`: o PEP 668 bloqueia instalação global e o
-> pacote da distro é o caminho certo.
+> ⚠️ On Arch, do **not** `pip install pyserial`: PEP 668 blocks global installs and the
+> distro package is the right way.
 
-### Winecarte (telemetria de jogo)
+### Winecarte (game telemetry)
 
-**Só necessário para o Passo 4.** Pule se não vai usar haptics em jogo nem o dash do
-volante.
+**Only needed for step 4.** Skip this if you won't use in-game haptics or the wheel dash.
 
-O **[Winecarte](https://github.com/srounce/winecarte)** (de
-[srounce](https://github.com/srounce)) é o que faz a telemetria atravessar a fronteira entre
-o prefixo do jogo e o do ConspitLink. **Não é parte deste projeto** e é instalado à parte:
+**[Winecarte](https://github.com/srounce/winecarte)** (by
+[srounce](https://github.com/srounce)) is what carries telemetry across the boundary
+between the game's prefix and ConspitLink's. **It is not part of this project** and is
+installed separately:
 
-| repositório | o que é |
+| repository | what it is |
 |---|---|
-| **[srounce/winecarte](https://github.com/srounce/winecarte)** | a ponte em si (`winecarte-run`, `winehub`, `wine2linux.exe`) |
-| **[srounce/linux-simracing-utils](https://github.com/srounce/linux-simracing-utils)** | instalador do mesmo autor; é o **jeito mais fácil** de obter o Winecarte, e já traz SimHub e CrewChief |
+| **[srounce/winecarte](https://github.com/srounce/winecarte)** | the bridge itself (`winecarte-run`, `winehub`, `wine2linux.exe`) |
+| **[srounce/linux-simracing-utils](https://github.com/srounce/linux-simracing-utils)** | installer by the same author; the **easiest way** to get Winecarte, also ships SimHub and CrewChief |
 
-O caminho recomendado é o instalador:
+The recommended path is the installer:
 
 ```bash
 git clone https://github.com/srounce/linux-simracing-utils
 cd linux-simracing-utils
-bash install.sh          # aceite os defaults; o Winecarte é um dos componentes
+bash install.sh          # accept the defaults; Winecarte is one of the components
 ```
 
-> Ele pergunta o que instalar. **O componente obrigatório aqui é o Winecarte**; SimHub e
-> CrewChief são independentes deste projeto e você pode pular.
+> It asks what to install. **The component required here is Winecarte**; SimHub and
+> CrewChief are independent of this project and you may skip them.
 
-> ⚠️ Escolha bem a pasta antes de instalar: o caminho fica gravado nos lançadores. Se mover
-> depois, rode o `install.sh` de novo do novo lugar.
+> ⚠️ Pick the folder carefully before installing: the path gets baked into the launchers.
+> If you move it later, re-run `install.sh` from the new location.
 
-O `tools/run-conspitlink.sh` **acha o Winecarte sozinho** se ele estiver no `PATH` ou em
-`~/apps/linux-simracing-utils/bin/`. Sem ele o app abre normalmente — só sem telemetria de
-jogo.
+`tools/run-conspitlink.sh` **finds Winecarte on its own** if it's on `PATH` or in
+`~/apps/linux-simracing-utils/bin/`. Without it the app opens normally — just without game
+telemetry.
 
-### Acesso à porta serial
+### Serial port access
 
-O grupo dono de `/dev/ttyACM*` **muda entre distros** — é `dialout` no Fedora e `uucp` no
-Arch. Não chute; detecte:
+The group owning `/dev/ttyACM*` **changes between distros** — `dialout` on Fedora, `uucp`
+on Arch. Don't guess; detect:
 
 ```bash
-# com a base ligada
-grupo=$(stat -c '%G' /dev/ttyACM*)
-echo "grupo do device: $grupo"
-id -nG | tr ' ' '\n' | grep -qx "$grupo" || sudo usermod -aG "$grupo" "$USER"
+# with the base powered on
+group=$(stat -c '%G' /dev/ttyACM*)
+echo "device group: $group"
+id -nG | tr ' ' '\n' | grep -qx "$group" || sudo usermod -aG "$group" "$USER"
 ```
 
-Depois de `usermod` é **obrigatório fazer logout/login** — grupo novo não vale na sessão
-atual.
+After `usermod` you **must log out and back in** — new groups don't apply to the current
+session.
 
-### Verificação
+### Verification
 
-Este script confere tudo o que este README pede e diz o que falta, com a correção ao lado:
+This script checks everything this README asks for and says what's missing, with the fix
+next to each failure:
 
 ```bash
 tools/check-setup.sh
 ```
 
-Rode antes de começar, e de novo ao final. Ele funciona com o hardware desligado (pula só os
-testes que dependem dele).
+Run it before starting, and again at the end. It works with the hardware unplugged (it just
+skips the tests that need it).
 
 ---
 
-## Passo 1 — Regra udev (obrigatório)
+## Step 1 — udev rule (required)
 
-Corrige os eixos **e** libera o acesso HID que o ConspitLink precisa.
+Fixes the axes **and** grants the HID access ConspitLink needs.
 
 ```bash
 sudo cp udev/70-conspit.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-É **um arquivo só para todos os dispositivos Conspit** (VID `3514`): a seção de acesso casa
-por vendor, então base, 2º MCU, pedais e volantes ficam cobertos sem uma regra por device —
-foi o que fez o volante H.AO funcionar no dia em que foi ligado, sem tocar no arquivo. Se
-você tinha regras antigas (`70-conspit-ares.rules`, `99-conspit*.rules`, ou a
-`70-uhid-shim.rules` de versões anteriores deste repo), remova-as. O `tools/check-setup.sh`
-lista o que sobrou, uma a uma.
+It is **a single file for every Conspit device** (VID `3514`): the access section matches
+by vendor, so the base, the 2nd MCU, pedals and wheels are all covered without one rule per
+device — that's what made the H.AO wheel work the day it was plugged in, without touching
+the file. If you had older rules (`70-conspit-ares.rules`, `99-conspit*.rules`, or the
+`70-uhid-shim.rules` from earlier versions of this repo), remove them. `tools/check-setup.sh`
+lists what's left, one by one.
 
-> ⚠️ O prefixo **`70-`** é obrigatório, e por **dois** motivos:
+> ⚠️ The **`70-`** prefix is mandatory, for **two** reasons:
 >
-> 1. O systemd efetiva o `TAG="uaccess"` em `73-seat-late.rules`. Numerada como `99-`, a
->    regra adiciona a tag tarde demais e o `/dev/hidraw*` continua root-only **em silêncio,
->    sem erro nenhum**.
-> 2. Quem dá ACL a joystick é `70-uaccess.rules:61`
->    (`ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"`). Como `70-conspit` ordena antes de
->    `70-uaccess` (`c` < `u`), atribuir `ID_INPUT_JOYSTICK="1"` aqui ainda é visto por ela.
+> 1. systemd applies `TAG="uaccess"` in `73-seat-late.rules`. Numbered `99-`, the rule adds
+>    the tag too late and `/dev/hidraw*` stays root-only — **silently, with no error**.
+> 2. Joystick ACLs are granted by `70-uaccess.rules:61`
+>    (`ENV{ID_INPUT_JOYSTICK}=="?*", TAG+="uaccess"`). Since `70-conspit` sorts before
+>    `70-uaccess` (`c` < `u`), assigning `ID_INPUT_JOYSTICK="1"` here is still seen by it.
 
-Conferir (com o hardware ligado) — `fuzz` e `flat` devem estar zerados:
+Verify (with the hardware on) — `fuzz` and `flat` must be zero:
 
 ```bash
 python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick
-python3 tools/evdev_info.py /dev/input/conspit-cpp-lite                    # pedais
+python3 tools/evdev_info.py /dev/input/conspit-cpp-lite                    # pedals
 python3 tools/evdev_info.py /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick
 ```
 
-O que a regra corrige, medido antes dela:
+What the rule fixes, measured before it:
 
-| device | antes | o que isso é |
+| device | before | what that means |
 |---|---|---|
-| base, `ABS_X` | `fuzz 255`, `flat 4095` | serrilhado no esterço + **zona morta de ~12,5%** no centro |
-| pedais, 3 eixos | `fuzz 15`, `flat 255` (0–4095) | **~6% de curso morto** no começo de cada pedal |
-| volante, 7 eixos | `fuzz 15/255`, `flat 255/4095` | idem nos **paddles Hall** (embreagem, bite point) |
+| base, `ABS_X` | `fuzz 255`, `flat 4095` | steering jitter filter + **~12.5% deadzone** around center |
+| pedals, 3 axes | `fuzz 15`, `flat 255` (0–4095) | **~6% dead travel** at the start of each pedal |
+| wheel, 7 axes | `fuzz 15/255`, `flat 255/4095` | same, on the **Hall paddles** (clutch, bite point) |
 
-> ⚠️ Nos pedais, **não** use `/dev/input/by-id/`. O CPP.LITE expõe duas collections HID na
-> mesma interface USB, o `by-id` acaba apontando para o canal vendor (um eixo de 0–255) e
-> não para os pedais. O symlink `/dev/input/conspit-cpp-lite`, criado pela regra, é o
-> caminho estável para os três eixos reais. (O H.AO não sofre disso: como tem botões, o
-> `input_id` classifica a collection certa sozinho.)
+> ⚠️ For the pedals, do **not** use `/dev/input/by-id/`. The CPP.LITE exposes two HID
+> collections on the same USB interface, and `by-id` ends up pointing at the vendor channel
+> (a single 0–255 axis) instead of the pedals. The `/dev/input/conspit-cpp-lite` symlink,
+> created by the rule, is the stable path to the three real axes. (The H.AO doesn't suffer
+> from this: since it has buttons, `input_id` classifies the right collection on its own.)
 
-## Passo 2 — Verificar o hardware (recomendado)
+## Step 2 — Verify the hardware (recommended)
 
-Com a base **ligada por USB**. Tudo aqui é somente leitura — nada é escrito no hardware.
+With the base **connected over USB**. Everything here is read-only — nothing is written to
+the hardware.
 
 ```bash
-python3 tools/probe_serial.py            # fala o protocolo OpenFFBoard (só leitura)
-python3 tools/hid_watch.py 15            # posição nos dois canais (gire o volante)
-python3 tools/cpp_pedal.py ler           # config gravada nos pedais (só leitura)
+python3 tools/probe_serial.py            # speaks the OpenFFBoard protocol (read-only)
+python3 tools/hid_watch.py 15            # position on both channels (turn the wheel)
+python3 tools/cpp_pedal.py ler           # config stored in the pedals (read-only)
 ```
 
-`probe_serial.py` deve responder `sys.0.swver? -> 1.15.0` e listar as classes ativas
-(`main`, `sys`, `axis`, `fx`, `odrv`, `can`, `cananalog`). Ele acha a porta sozinho por
-`/dev/serial/by-id/`; para forçar outra, passe o device como argumento.
+`probe_serial.py` should answer `sys.0.swver? -> 1.15.0` and list the active classes
+(`main`, `sys`, `axis`, `fx`, `odrv`, `can`, `cananalog`). It finds the port by itself via
+`/dev/serial/by-id/`; to force another, pass the device as an argument.
 
 ---
 
-## Passo 3 — ConspitLink 2.0 sob Wine (opcional)
+## Step 3 — ConspitLink 2.0 under Wine (optional)
 
-Baixe o **ConspitLink2.0.exe** do site oficial da Conspit e coloque na raiz do repo. Ele é
-proprietário (~300 MB), está no `.gitignore` e **não é redistribuído aqui** — você precisa
-obtê-lo da Conspit.
+Download **ConspitLink2.0.exe** from Conspit's official site and put it at the repo root.
+It is proprietary (~300 MB), it's in `.gitignore`, and it is **not redistributed here** —
+you must get it from Conspit.
 
 ```bash
-cd ~/apps/conspit-ares-linux        # a pasta do clone
+cd ~/apps/conspit-ares-linux        # your clone
 export WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix"
 mkdir -p "$WINEPREFIX"
 
-wineboot -u                       # cria o prefixo isolado
-wine ConspitLink2.0.exe /S        # instalação silenciosa
+wineboot -u                       # creates the isolated prefix
+wine ConspitLink2.0.exe /S        # silent install
 ```
 
-Prepare o prefixo — **sem isto o app não enxerga os dispositivos**:
+Prepare the prefix — **without this the app cannot see the devices**:
 
 ```bash
 python3 tools/conspit_wine_setup.py
 ```
 
-O script deve terminar com `tudo certo.`. Abra:
+The script should end with `tudo certo.` ("all good"). Open the app:
 
 ```bash
 tools/run-conspitlink.sh
 ```
 
-### Atalho no menu (opcional)
+### Menu shortcut (optional)
 
-Para abrir clicando, em vez de pelo terminal:
+To launch by clicking instead of from a terminal:
 
 ```bash
-tools/instalar-atalho.sh              # instala
-tools/instalar-atalho.sh --remover    # desinstala
+tools/instalar-atalho.sh              # install
+tools/instalar-atalho.sh --remover    # uninstall
 ```
 
-Ele reaproveita o ícone que o Wine já extraiu do `.exe` e aponta para o
-`run-conspitlink.sh` — ou seja, o atalho passa pelas mesmas verificações e sobe a ponte de
-telemetria.
+It reuses the icon Wine already extracted from the `.exe` and points at
+`run-conspitlink.sh` — so the shortcut goes through the same pre-flight checks and starts
+the telemetry bridge.
 
-> O Wine cria um atalho **próprio** ao instalar o app, em
-> `~/.local/share/applications/wine/Programs/`. Ele funciona, mas executa o `.lnk` direto:
-> pula as verificações e não sobe a ponte. O nosso mora fora daquela pasta justamente para o
-> `winemenubuilder` não o sobrescrever. O script diz como esconder o do Wine, se quiser.
+> Wine creates a shortcut of **its own** when the app installs, under
+> `~/.local/share/applications/wine/Programs/`. It works, but it runs the `.lnk` directly:
+> it skips the checks and doesn't start the bridge. Ours lives outside that folder
+> precisely so `winemenubuilder` never overwrites it. The script tells you how to hide
+> Wine's, if you want.
 
-> ⚠️ **Rode o `conspit_wine_setup.py` de novo ao ligar um device Conspit novo.** Ele monta a
-> lista de dispositivos a partir do que está no barramento. (Na prática o device novo já
-> funciona sem isso, pela rede de segurança descrita abaixo — mas a lista é o que documenta
-> a intenção, e o `check-setup.sh` cobra.)
+> ⚠️ **Re-run `conspit_wine_setup.py` whenever you plug in a new Conspit device.** It
+> builds the device list from what's on the bus. (In practice a new device already works
+> without it, thanks to the safety net described below — but the list is what documents the
+> intent, and `check-setup.sh` checks for it.)
 
-### O que o `conspit_wine_setup.py` faz, e por quê
+### What `conspit_wine_setup.py` does, and why
 
-Duas coisas independentes:
+Two independent things:
 
-**1. Registra a porta serial na árvore PnP do Wine.** O Wine expõe portas seriais como
-dispositivos genéricos, **sem VID/PID de USB**. O `QSerialPortInfo` do Qt (que o ConspitLink
-usa) enumera pela classe `Ports` do SetupAPI e tira o VID/PID do device instance ID — então
-sem um nó na árvore PnP a base não aparece. O script cria esse nó e mapeia a `COM33` nos dois
-lugares obrigatórios (`dosdevices/com33` e `HKLM\Software\Wine\Ports\COM33`), sempre por
-`/dev/serial/by-id/...`.
+**1. Registers the serial port in Wine's PnP tree.** Wine exposes serial ports as generic
+devices, **without USB VID/PID**. Qt's `QSerialPortInfo` (which ConspitLink uses)
+enumerates via SetupAPI's `Ports` class and takes the VID/PID from the device instance
+ID — so without a PnP node the base never shows up. The script creates that node and maps
+`COM33` in the two mandatory places (`dosdevices/com33` and
+`HKLM\Software\Wine\Ports\COM33`), always via `/dev/serial/by-id/...`.
 
-**2. Põe o `winebus` no backend hidraw.** Este é o passo que faz os pedais, o volante e a
-telemetria completa da base funcionarem. Por padrão o Wine entrega devices HID **sintetizados
-pelo SDL**, com uma collection só: os canais vendor de 64 bytes (pedais, volantes) e a
-collection de comandos da base simplesmente não existem para o app. Com o backend hidraw, o
-Wine passa o descritor real e o `hidclass` separa as collections em `&Col01`/`&Col02`,
-exatamente como o Windows.
+**2. Switches `winebus` to the hidraw backend.** This is the step that makes the pedals,
+the wheel and the base's full telemetry work. By default Wine hands out HID devices
+**synthesized by SDL**, with a single collection: the 64-byte vendor channels (pedals,
+wheels) and the base's command collection simply don't exist for the app. On the hidraw
+backend, Wine passes the real descriptor and `hidclass` splits the collections into
+`&Col01`/`&Col02`, exactly like Windows.
 
-> ⚠️ A chave é `HKLM\System\CurrentControlSet\Services\`**`winebus`**, **não** a subchave
-> `...\winebus\Parameters`. O `winebus.sys` documenta a chave no próprio código
-> (`/* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */`) e nunca lê a
-> subchave. Escrever no lugar errado é ignorado **em silêncio** — foi o que atrasou este
-> projeto por três dias. Se for diagnosticar backend HID no Wine, o canal é
-> `WINEDEBUG=+hid` (o `+plugplay` **não** mostra essas decisões).
+> ⚠️ The key is `HKLM\System\CurrentControlSet\Services\`**`winebus`**, **not** the
+> `...\winebus\Parameters` subkey. `winebus.sys` documents the key in its own source
+> (`/* @@ Wine registry key: HKLM\System\CurrentControlSet\Services\WineBus */`) and never
+> reads the subkey. Writing to the wrong place is ignored **silently** — it cost this
+> project three days. If you're debugging Wine's HID backend, the channel is
+> `WINEDEBUG=+hid` (`+plugplay` does **not** show these decisions).
 
 ---
 
-## Passo 4 — Telemetria de jogo (opcional)
+## Step 4 — Game telemetry (optional)
 
-Necessário para os **haptics dos pedais no modo `Customize`** e para o **dash / rev lights do
-volante**, que o próprio ConspitLink alimenta. Nada disto é preciso para configurar a base,
-os pedais ou o volante.
+Needed for the pedals' **`Customize` haptics** and the wheel's **dash / rev lights**, both
+fed by ConspitLink itself. None of this is needed to configure the base, the pedals or the
+wheel.
 
-O problema: os jogos escrevem telemetria em memória compartilhada nomeada, e o namespace de
-objetos do wineserver é **por prefixo**. O jogo roda no prefixo do Proton, o ConspitLink no
-dele, e um não enxerga a memória do outro — o app fica em `Not Started` para sempre.
+The problem: games write telemetry into named shared memory, and the wineserver object
+namespace is **per prefix**. The game runs in Proton's prefix, ConspitLink in its own, and
+neither sees the other's memory — the app stays at `Not Started` forever.
 
-Quem resolve é o **[Winecarte](https://github.com/srounce/winecarte)**, que faz a ponte em
-duas metades — instalado nos [Pré-requisitos](#winecarte-telemetria-de-jogo).
+**[Winecarte](https://github.com/srounce/winecarte)** solves it with a bridge in two
+halves — installed in [Prerequisites](#winecarte-game-telemetry).
 
-1. **No jogo**, em *Propriedades → Opções de Lançamento* no Steam:
+1. **On the game**, in Steam under *Properties → Launch Options*:
 
    ```
    winecarte-run %command%
    ```
 
-   Isto exporta a memória compartilhada do jogo para `/dev/shm`.
+   This exports the game's shared memory to `/dev/shm`.
 
-2. **No ConspitLink**, nada a fazer: `tools/run-conspitlink.sh` sobe a outra metade sozinho
-   (o `winehub`, apontado para este prefixo) e avisa `ponte de telemetria: no ar`. Para
-   desligar, `--sem-ponte`.
+2. **On ConspitLink**, nothing to do: `tools/run-conspitlink.sh` starts the other half by
+   itself (`winehub`, pointed at this prefix) and prints `ponte de telemetria: no ar`
+   ("telemetry bridge: up"). To disable it, `--sem-ponte`.
 
-Entre numa sessão do jogo: o `Select Game` deve trocar de `Not Started` para **`Started`**.
+Join a session in the game: `Select Game` should flip from `Not Started` to **`Started`**.
 
-> A detecção **é** o attach à memória compartilhada — não há mecanismo separado. Se o
-> `Started` apareceu, a telemetria está chegando; se não apareceu, a ponte é que falhou.
+> Detection **is** the attach to shared memory — there is no separate mechanism. If
+> `Started` showed up, telemetry is flowing; if it didn't, the bridge is what failed.
 
-### Jogos cobertos
+### Games covered
 
-Validado no **Le Mans Ultimate**. Os nomes dos mapas conferem também para **Assetto Corsa**,
-**AC EVO**, **rFactor 2** e **AMS2 / Project Cars 2**.
+Validated with **Le Mans Ultimate**. The memory-map names also match for **Assetto Corsa**,
+**AC EVO**, **rFactor 2** and **AMS2 / Project Cars 2**.
 
-> ❌ **iRacing não funciona por esta rota** — o Winecarte não exporta o mapa dele
+> ❌ **iRacing does not work through this route** — Winecarte doesn't export its map
 > (`Local\IRSDKMemMapFileName`).
 
-> Jogos de telemetria **UDP** (família F1, DiRT Rally 2.0, EA WRC, Forza) não precisam de
-> ponte nenhuma: UDP é rede no kernel e atravessa a fronteira Wine/Proton sozinho. Aponte a
-> telemetria do jogo para `127.0.0.1`. **Não testado aqui** — nenhum desses jogos nesta
-> bancada.
+> **UDP** telemetry games (the F1 series, DiRT Rally 2.0, EA WRC, Forza) need no bridge at
+> all: UDP is kernel networking and crosses the Wine/Proton boundary on its own. Point the
+> game's telemetry at `127.0.0.1`. **Untested here** — none of those games on this rig.
 
 ---
 
-## Problemas conhecidos
+## Known issues
 
 ### "Error: The base port is occupied"
 
-Acontece ao **tirar o USB com o app aberto**: o handle da porta fica órfão no wineserver.
-Costuma ser inofensivo (o app segue funcionando), mas para limpar:
+Happens when you **unplug the USB with the app open**: the port handle is orphaned in the
+wineserver. Usually harmless (the app keeps working), but to clean up:
 
 ```bash
-tools/run-conspitlink.sh --limpo
+tools/run-conspitlink.sh --limpo      # "--clean": restarts this prefix's wineserver
 ```
 
-Evita-se fechando o app antes de desconectar a base.
+Avoid it by closing the app before disconnecting the base.
 
-### Os números de `/dev/ttyACM*`, `hidraw*` e `event*` mudam
+### The `/dev/ttyACM*`, `hidraw*` and `event*` numbers change
 
-A cada reenumeração do kernel (replug, suspend/resume) os números trocam — inclusive
-**entre a base e o segundo MCU da base**. Nunca fixe `ttyACM2`/`hidraw2`/`event21` em lugar
-nenhum. Resolva sempre por `/dev/serial/by-id/`, `/dev/input/by-id/` ou pelo VID/PID em
-`/sys/class/hidraw/*/device/uevent`. Todas as ferramentas deste repo fazem isso.
+On every kernel re-enumeration (replug, suspend/resume) the numbers shuffle — including
+**between the base and the base's second MCU**. Never hard-code `ttyACM2`/`hidraw2`/
+`event21` anywhere. Always resolve via `/dev/serial/by-id/`, `/dev/input/by-id/` or by
+VID/PID in `/sys/class/hidraw/*/device/uevent`. Every tool in this repo does that.
 
-### O app não lista um dispositivo que está ligado
+### The app doesn't list a device that is plugged in
 
-Quase sempre é uma destas duas:
+Almost always one of these two:
 
-1. **`/dev/hidraw*` sem ACL** — o backend hidraw depende disso. `tools/check-setup.sh`
-   seção 3 diz quais estão sem acesso; a correção é a regra udev do Passo 1.
-2. **`winebus` fora do backend hidraw** — seção 7 do `check-setup.sh`; a correção é
+1. **`/dev/hidraw*` without ACLs** — the hidraw backend depends on it. Section 3 of
+   `tools/check-setup.sh` says which ones lack access; the fix is the udev rule from
+   step 1.
+2. **`winebus` not on the hidraw backend** — section 7 of `check-setup.sh`; the fix is
    `python3 tools/conspit_wine_setup.py`.
 
-Para ver exatamente o que o app enxerga, compile o enumerador e rode dentro do prefixo:
+To see exactly what the app sees, build the enumerator and run it inside the prefix:
 
 ```bash
-x86_64-w64-mingw32-gcc tools/hidenum.c -o /tmp/hidenum.exe -lhid -lsetupapi
-WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix" wine /tmp/hidenum.exe
+make -C tools     # needs mingw-w64
+WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix" wine tools/hidenum.exe
 ```
 
-Cada device Conspit deve aparecer com suas duas collections (`usage 0x04` para o joystick,
-`usage 0x3A` para o canal vendor de 64 bytes). ⚠️ A enumeração tem corrida: logo após um
-`wineserver -k`, rode **duas vezes** com alguns segundos de intervalo.
+Every Conspit device should show its two collections (`usage 0x04` for the joystick,
+`usage 0x3A` for the 64-byte vendor channel). ⚠️ Enumeration has a race: right after a
+`wineserver -k`, run it **twice** a few seconds apart.
 
-### Calibrar os pedais
+### Calibrating the pedals
 
-A calibração de **min/max** mora na pedaleira, não no PC, e **não é legível** por nenhum
-comando — diagnostique pelo eixo: pedal solto deve marcar perto de `0`, no batente perto de
-`4095`.
+**Min/max** calibration lives in the pedal unit, not on the PC, and it is **not readable
+back** by any command — diagnose via the axis: pedal released should read near `0`, at full
+travel near `4095`.
 
 ```bash
-python3 tools/cpp_pedal.py monitorar                  # leitura crua dos três
-python3 tools/cpp_pedal.py calibrar acelerador min    # com o pedal SOLTO
-python3 tools/cpp_pedal.py calibrar acelerador max    # com o pedal no BATENTE
+python3 tools/cpp_pedal.py monitorar                  # raw reading of all three
+python3 tools/cpp_pedal.py calibrar acelerador min    # with the pedal RELEASED
+python3 tools/cpp_pedal.py calibrar acelerador max    # with the pedal FULLY PRESSED
 ```
 
-Dá para fazer o mesmo pela GUI do ConspitLink, que também expõe a *curva* (ajuste separado
-do min/max — ver [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md)).
+(Subcommands are in Portuguese: `monitorar` = monitor, `calibrar acelerador min/max` =
+calibrate throttle min/max.) The same can be done from the ConspitLink GUI, which also
+exposes the *curve* (a separate setting from min/max — see
+[docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md)).
 
 ---
 
-## Ferramentas
+## Tools
 
-| arquivo | o que faz |
+| file | what it does |
 |---|---|
-| `tools/check-setup.sh` | verifica o ambiente inteiro e diz o que falta corrigir |
-| `tools/probe_serial.py` | sonda **somente leitura** da CDC (só `?` e `!`, nunca `=`) |
-| `tools/evdev_info.py` | eixos com fuzz/flat e capacidades de FFB, sem disparar efeito |
-| `tools/parse_hid_rdesc.py` | decodifica report descriptor, destaca a PID usage page |
-| `tools/hid_watch.py` | posição do volante em evdev e hidraw ao mesmo tempo |
-| `tools/cpp_pedal.py` | lê, monitora e calibra os pedais **nativamente** (⚠️ `calibrar` escreve) |
-| `tools/conspit_wine_setup.py` | nó PnP da serial + backend hidraw do winebus |
-| `tools/hidenum.c` | enumera HID de dentro do prefixo Wine (diagnóstico) |
-| `tools/dinput_axes.c` | mede o mapeamento de eixos do DirectInput no prefixo (diagnóstico) |
-| `tools/conspit-prefixo.sh` | resolve o caminho do prefixo (incluído pelos outros) |
-| `tools/instalar-atalho.sh` | cria o atalho do app no menu (usa o ícone do Wine) |
-| `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
-| `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |
+| `tools/check-setup.sh` | checks the whole environment and says what to fix |
+| `tools/probe_serial.py` | **read-only** probe of the CDC serial (only `?` and `!`, never `=`) |
+| `tools/evdev_info.py` | axes with fuzz/flat and FFB capabilities, without firing effects |
+| `tools/parse_hid_rdesc.py` | decodes a report descriptor, highlights the PID usage page |
+| `tools/hid_watch.py` | wheel position on evdev and hidraw at the same time |
+| `tools/cpp_pedal.py` | reads, monitors and calibrates the pedals **natively** (⚠️ `calibrar` writes) |
+| `tools/conspit_wine_setup.py` | serial PnP node + winebus hidraw backend + SteamBridge |
+| `tools/hidenum.c` | enumerates HID from inside the Wine prefix (diagnostic) |
+| `tools/dinput_axes.c` | measures DirectInput axis mapping inside the prefix (diagnostic) |
+| `tools/Makefile` | builds the two `.exe` diagnostics (`make -C tools`) |
+| `tools/conspit-prefixo.sh` | resolves the prefix path (sourced by the others) |
+| `tools/instalar-atalho.sh` | installs the app's menu shortcut (reuses Wine's icon) |
+| `tools/run-conspitlink.sh` | opens ConspitLink in the isolated prefix |
+| `udev/70-conspit.rules` | zeroes fuzz/deadzone and grants hidraw access |
 
-> ⚠️ **É uma base de 20 Nm.** As ferramentas de diagnóstico são deliberadamente somente de
-> leitura. Não mande `=`, `sys.0.save`, `sys.0.format` nem comandos de calibração do ODrive
-> sem o volante livre e as mãos fora. As duas exceções que escrevem estão marcadas acima.
+> ⚠️ **This is a 20 Nm base.** The diagnostic tools are deliberately read-only. Do not send
+> `=`, `sys.0.save`, `sys.0.format` or ODrive calibration commands unless the wheel is free
+> and your hands are clear. The two exceptions that write are marked above.
