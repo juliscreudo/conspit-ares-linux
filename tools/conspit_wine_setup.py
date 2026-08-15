@@ -206,6 +206,73 @@ def configurar_backend(prefixo, devices):
     print("   requer /dev/hidraw* acessivel -- ver udev/70-conspit.rules")
 
 
+def caminho_steam():
+    """Acha a raiz do Steam nativo do usuario, ou None."""
+    for p in ("~/.local/share/Steam", "~/.steam/steam", "~/.steam/root"):
+        c = os.path.expanduser(p)
+        if os.path.isdir(os.path.join(c, "steamapps")):
+            return os.path.realpath(c)
+    return None
+
+
+def configurar_steam(prefixo):
+    """Ponte para o app achar os jogos do Steam NATIVO.
+
+    O ConspitLink le HKCU\\SOFTWARE\\Valve\\Steam\\SteamPath e a partir dai
+    abre `<SteamPath>/config/libraryfolders.vdf` e `steamapps/common/...`
+    (medido nas strings do binario; ha um `GameData::readVdf` no .pdb). Num
+    Linux com Steam nativo essa chave simplesmente nao existe no prefixo --
+    o Steam nativo nunca escreve no registro do Wine -- e o app nao acha
+    jogo nenhum.
+
+    Apontar direto para o Steam via Z: nao basta: os caminhos DENTRO do
+    libraryfolders.vdf sao Linux absolutos (`/home/...`), que como caminho
+    Windows cairiam na raiz do drive atual. Por isso montamos um diretorio
+    ponte em C:\\SteamBridge com:
+
+      config/libraryfolders.vdf   copia com os caminhos reescritos para Z:
+      steamapps -> symlink        para o steamapps real
+
+    Assim o app acha os jogos tanto pela biblioteca primaria (= SteamPath)
+    quanto pelas bibliotecas listadas no vdf.
+
+    ⚠️ Isto so' resolve LOCALIZAR o jogo instalado. Saber que ele esta
+    RODANDO, e receber telemetria, e' outro problema -- ver a secao da ponte
+    de telemetria em tools/run-conspitlink.sh.
+    """
+    steam = caminho_steam()
+    if not steam:
+        print("\n3. Steam nativo nao encontrado; pulando a ponte de jogos.")
+        return
+
+    ponte = os.path.join(prefixo, "drive_c", "SteamBridge")
+    os.makedirs(os.path.join(ponte, "config"), exist_ok=True)
+
+    vdf_orig = os.path.join(steam, "config", "libraryfolders.vdf")
+    if os.path.isfile(vdf_orig):
+        with open(vdf_orig, encoding="utf-8", errors="replace") as f:
+            txt = f.read()
+        # "path"  "/home/..."   ->   "path"  "Z:/home/..."
+        txt = re.sub(r'("path"\s+")(/[^"]*)"', r'\1Z:\2"', txt)
+        with open(os.path.join(ponte, "config", "libraryfolders.vdf"), "w",
+                  encoding="utf-8") as f:
+            f.write(txt)
+
+    alvo = os.path.join(ponte, "steamapps")
+    if os.path.islink(alvo) or os.path.exists(alvo):
+        if os.path.islink(alvo):
+            os.remove(alvo)
+    if not os.path.exists(alvo):
+        os.symlink(os.path.join(steam, "steamapps"), alvo)
+
+    print("\n3. Ponte para o Steam nativo...")
+    wine(prefixo, "reg", "add", r"HKCU\SOFTWARE\Valve\Steam", "/v", "SteamPath",
+         "/t", "REG_SZ", "/d", "C:/SteamBridge", "/f")
+    print(f"   Steam nativo : {steam}")
+    print(r"   SteamPath    = C:/SteamBridge")
+    print(f"   steamapps    -> {os.path.join(steam, 'steamapps')}")
+
+
 def configurar(prefixo, b, com, devices):
     nome = f"{b['modelo']} (COM{com})"
     k = chave_enum(b)
@@ -246,6 +313,7 @@ def configurar(prefixo, b, com, devices):
     print(rf"   HKLM\Software\Wine\Ports\COM{com} = {b['link']}")
 
     configurar_backend(prefixo, devices)
+    configurar_steam(prefixo)
 
     # Symlink por ultimo: `wine reg` pode disparar um wineboot que recria os
     # symlinks a partir do registro, sobrescrevendo o que criassemos antes.
