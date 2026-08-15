@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifica se esta maquina esta pronta para usar a Conspit Ares.
+# Verifica se esta maquina esta pronta para usar os devices Conspit.
 #
 # Roda em qualquer distro: nada aqui assume gerenciador de pacotes. Cada
 # falha vem com a correcao ao lado.
@@ -11,6 +11,9 @@
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VID=3514
 PID_BASE=0301
+PID_MCU2=0300
+PID_PEDAIS=0005
+PID_VOLANTE=0007
 
 falhas=0
 avisos=0
@@ -20,35 +23,50 @@ falha() { printf '  [FALHA] %s\n' "$1"; [[ -n "${2:-}" ]] && printf '          -
 aviso() { printf '  [aviso] %s\n' "$1"; [[ -n "${2:-}" ]] && printf '          -> %s\n' "$2"; avisos=$((avisos+1)); }
 secao() { printf '\n%s\n' "$1"; }
 
-echo "Conspit Ares -- verificacao de ambiente"
+# nome amigavel de um PID Conspit
+nome_pid() {
+  case "$1" in
+    "$PID_BASE")    echo "base Ares" ;;
+    "$PID_MCU2")    echo "2o MCU da base (dash)" ;;
+    "$PID_PEDAIS")  echo "pedais CPP.LITE" ;;
+    "$PID_VOLANTE") echo "volante H.AO" ;;
+    *)              echo "device Conspit" ;;
+  esac
+}
+
+echo "Conspit -- verificacao de ambiente"
 echo "distro: $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || echo desconhecida)"
 echo "kernel: $(uname -r)"
 
 # ---------------------------------------------------------------- hardware
 secao "1. Hardware"
 
+# Todos os devices Conspit no barramento, nao so a base: o mesmo app atende
+# base, pedais e volantes, e cada um tem seu proprio canal.
+pids_presentes=()
 base_sysfs=""
 for d in /sys/bus/usb/devices/*; do
   [[ -r "$d/idVendor" && -r "$d/idProduct" ]] || continue
-  if [[ "$(cat "$d/idVendor")" == "$VID" && "$(cat "$d/idProduct")" == "$PID_BASE" ]]; then
-    base_sysfs="$d"; break
-  fi
+  [[ "$(cat "$d/idVendor")" == "$VID" ]] || continue
+  pid=$(cat "$d/idProduct")
+  pids_presentes+=("$pid")
+  ok "$VID:$pid  $(cat "$d/product" 2>/dev/null)  [$(nome_pid "$pid")]"
+  [[ "$pid" == "$PID_BASE" ]] && base_sysfs="$d"
 done
 
 com_hw=0
-if [[ -n "$base_sysfs" ]]; then
-  ok "base detectada ($VID:$PID_BASE, $(cat "$base_sysfs/product" 2>/dev/null))"
+if [[ ${#pids_presentes[@]} -gt 0 ]]; then
   com_hw=1
 else
-  aviso "base nao detectada no USB" \
-        "os testes de hardware serao pulados. Para conferi-los, ligue a base
-             e rode de novo. Confira tambem: lsusb | grep -i conspit"
+  aviso "nenhum device Conspit no USB" \
+        "os testes de hardware serao pulados. Para conferi-los, ligue os
+             dispositivos e rode de novo. Confira tambem: lsusb | grep -i 3514"
 fi
 
 # --------------------------------------------------------------- serial CDC
 secao "2. Porta serial (configuracao da base)"
 
-if [[ $com_hw -eq 0 ]]; then
+if [[ -z "$base_sysfs" ]]; then
   echo "  (pulado -- base desligada)"
 else
 serial_link=$(ls /dev/serial/by-id/usb-CONSPIT_CONSPIT_ARES_*-if00 2>/dev/null | head -1)
@@ -69,16 +87,20 @@ fi
 fi
 
 # -------------------------------------------------------------------- hidraw
-secao "3. Canais HID (telemetria do ConspitLink)"
+secao "3. Canais HID"
 
+# ⚠️ Isto ficou CRITICO desde 2026-08-15: com o winebus no backend hidraw, e'
+# por aqui que o ConspitLink fala com TODOS os devices -- nao so com os canais
+# vendor. Um hidraw sem ACL agora derruba o device inteiro no app.
 if [[ $com_hw -eq 0 ]]; then
-  echo "  (pulado -- base desligada)"
+  echo "  (pulado -- nenhum device ligado)"
 else
 achou_hidraw=0
 for h in /sys/class/hidraw/hidraw*; do
   [[ -r "$h/device/uevent" ]] || continue
   hid_id=$(grep '^HID_ID=' "$h/device/uevent" 2>/dev/null | cut -d= -f2)
-  # HID_ID=0003:00003514:00000301 -- comparar como numero
+  # HID_ID=0003:00003514:00000301 -- comparar como numero (zeros a esquerda
+  # de largura variavel)
   ovid=$(echo "$hid_id" | cut -d: -f2)
   [[ -z "$ovid" ]] && continue
   if [[ $((16#$ovid)) -eq $((16#$VID)) ]]; then
@@ -102,10 +124,28 @@ secao "4. Regra udev"
 regra_oficial=/etc/udev/rules.d/70-conspit.rules
 if [[ -f "$regra_oficial" ]]; then
   ok "regra instalada (70-conspit.rules)"
+  if ! diff -q "$repo/udev/70-conspit.rules" "$regra_oficial" >/dev/null 2>&1; then
+    aviso "a regra instalada difere da do repo" \
+          "sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
+             sudo udevadm control --reload-rules && sudo udevadm trigger"
+  fi
 else
   falha "regra udev NAO instalada" \
         "sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
              sudo udevadm control --reload-rules && sudo udevadm trigger"
+fi
+
+# O shim de uhid foi aposentado em 2026-08-15 (o backend hidraw do winebus
+# tornou-o desnecessario). A regra que ele exigia dava a QUALQUER processo da
+# sessao o poder de criar dispositivos de entrada virtuais -- num Wayland
+# isso contorna o isolamento de entrada do compositor. Nao ha motivo para
+# mante-la.
+if [[ -f /etc/udev/rules.d/70-uhid-shim.rules ]]; then
+  aviso "70-uhid-shim.rules ainda instalada, mas nao e' mais necessaria" \
+        "ela concede acesso a /dev/uhid (criar teclado/mouse virtual) e so
+             existia para o shim, que foi removido do projeto. Remova:
+             sudo rm /etc/udev/rules.d/70-uhid-shim.rules
+             sudo udevadm control --reload-rules"
 fi
 
 # Outras regras Conspit na maquina. Reportadas UMA A UMA, nunca em bloco: o
@@ -148,57 +188,77 @@ fi
 # ---------------------------------------------------------- eixos corrigidos
 secao "5. Eixos (fuzz / deadzone)"
 
+# Conta quantos eixos de um device ainda tem fuzz/flat ruins. O evdev_info.py
+# marca cada um com "fuzz/flat ruins".
+eixos_ruins() {
+  python3 "$repo/tools/evdev_info.py" "$1" 2>/dev/null | grep -cE 'fuzz/flat ruins'
+}
+
 if [[ $com_hw -eq 0 ]]; then
-  echo "  (pulado -- base desligada)"
-else
-ev=$(ls /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-event-joystick 2>/dev/null | head -1)
-if [[ -z "$ev" ]]; then
-  aviso "device de joystick nao encontrado" "confira: ls -l /dev/input/by-id/"
+  echo "  (pulado -- nenhum device ligado)"
 elif ! command -v python3 >/dev/null; then
   aviso "python3 ausente, nao da para verificar fuzz/flat"
 else
-  linha=$(python3 "$repo/tools/evdev_info.py" "$ev" 2>/dev/null | grep -E '^\s+ABS_X')
-  if [[ -z "$linha" ]]; then
-    aviso "nao consegui ler os eixos de $ev"
+
+# --- base
+if [[ -n "$base_sysfs" ]]; then
+  ev=$(ls /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-event-joystick 2>/dev/null | head -1)
+  if [[ -z "$ev" ]]; then
+    aviso "device de joystick da base nao encontrado" "confira: ls -l /dev/input/by-id/"
   else
-    fuzz=$(echo "$linha" | awk '{print $5}')
-    flat=$(echo "$linha" | awk '{print $6}')
-    if [[ "$fuzz" == "0" && "$flat" == "0" ]]; then
-      ok "ABS_X com fuzz=0 flat=0"
+    n=$(eixos_ruins "$ev")
+    if [[ "$n" == "0" ]]; then
+      ok "base: fuzz/flat zerados"
     else
-      falha "ABS_X com fuzz=$fuzz flat=$flat (deveria ser 0/0)" \
-            "a regra udev nao esta sendo aplicada; rode:
-             sudo udevadm control --reload-rules && sudo udevadm trigger
+      falha "base: $n eixo(s) ainda com fuzz/flat ruins" \
+            "sudo udevadm control --reload-rules && sudo udevadm trigger
              e reconecte a base"
     fi
   fi
 fi
-fi
 
-# Pedais CPP.LITE: opcionais, so verifica se estiverem no barramento.
-# NAO usar /dev/input/by-id/ aqui -- nos pedais ele aponta para o canal
-# vendor (1 eixo de 0-255), nao para os tres eixos reais. Ver secao 3 da
-# udev/70-conspit.rules.
-if lsusb 2>/dev/null | grep -qi '3514:0005'; then
+# --- pedais CPP.LITE
+# NAO usar /dev/input/by-id/ aqui: nos pedais ele aponta para o canal vendor
+# (1 eixo de 0-255), nao para os tres eixos reais. Ver secao 3 da regra udev.
+if printf '%s\n' "${pids_presentes[@]}" | grep -qx "$PID_PEDAIS"; then
   ped=/dev/input/conspit-cpp-lite
   if [[ ! -e "$ped" ]]; then
-    falha "pedais CPP.LITE presentes, mas $ped nao existe" \
+    falha "pedais presentes, mas $ped nao existe" \
           "a secao 3 da regra nao esta aplicada:
              sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
              sudo udevadm control --reload-rules && sudo udevadm trigger"
-  elif ! command -v python3 >/dev/null; then
-    aviso "python3 ausente, nao da para verificar os eixos dos pedais"
   else
-    ruins=$(python3 "$repo/tools/evdev_info.py" "$ped" 2>/dev/null \
-            | grep -cE '^\s+ABS_(Y|Z|RX)\b.*fuzz/flat ruins')
-    if [[ "$ruins" == "0" ]]; then
-      ok "pedais CPP.LITE com fuzz/flat zerados"
+    n=$(eixos_ruins "$ped")
+    if [[ "$n" == "0" ]]; then
+      ok "pedais CPP.LITE: fuzz/flat zerados"
     else
-      falha "pedais CPP.LITE: $ruins eixo(s) ainda com fuzz/flat ruins" \
+      falha "pedais CPP.LITE: $n eixo(s) ainda com fuzz/flat ruins" \
             "sudo udevadm control --reload-rules && sudo udevadm trigger
              e reconecte os pedais"
     fi
   fi
+fi
+
+# --- volante H.AO
+# Aqui o by-id serve: como o volante tem botoes, o input_id classifica a
+# collection de joystick sozinho e o symlink -event-joystick sai correto.
+if printf '%s\n' "${pids_presentes[@]}" | grep -qx "$PID_VOLANTE"; then
+  vol=$(ls /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick 2>/dev/null | head -1)
+  if [[ -z "$vol" ]]; then
+    aviso "volante H.AO presente, mas sem symlink -event-joystick" \
+          "confira: ls -l /dev/input/by-id/"
+  else
+    n=$(eixos_ruins "$vol")
+    if [[ "$n" == "0" ]]; then
+      ok "volante H.AO: fuzz/flat zerados"
+    else
+      falha "volante H.AO: $n eixo(s) ainda com fuzz/flat ruins (paddles Hall)" \
+            "a secao 4 da regra nao esta aplicada:
+             sudo cp $repo/udev/70-conspit.rules /etc/udev/rules.d/
+             sudo udevadm control --reload-rules && sudo udevadm trigger"
+    fi
+  fi
+fi
 fi
 
 # ------------------------------------------------------------------ software
@@ -241,12 +301,59 @@ else
           "WINEPREFIX=$pfx wine $repo/ConspitLink2.0.exe /S"
   fi
 
-  no_pnp=$(grep -l "VID_${VID}&PID_${PID_BASE}" "$pfx/system.reg" 2>/dev/null)
-  if [[ -n "$no_pnp" ]]; then
-    ok "no PnP registrado (o app consegue enxergar a base)"
+  reg="$pfx/system.reg"
+
+  if grep -q "VID_${VID}&PID_${PID_BASE}" "$reg" 2>/dev/null; then
+    ok "no PnP da serial registrado (o app acha a base)"
   else
     falha "no PnP AUSENTE -- o ConspitLink nao vai encontrar a base" \
           "python3 $repo/tools/conspit_wine_setup.py"
+  fi
+
+  # Backend do winebus. Sem isto o Wine entrega devices HID sintetizados pelo
+  # SDL, com UMA collection so: os canais vendor (pedais, volantes) e a
+  # collection de comandos da base simplesmente nao existem para o app.
+  if grep -q '"Enable SDL"=dword:00000000' "$reg" 2>/dev/null; then
+    ok "winebus no backend hidraw (Enable SDL=0)"
+  else
+    falha "winebus NAO esta no backend hidraw" \
+          "o app abre, mas nao ve pedais nem volantes, e a telemetria da base
+             fica incompleta. Corrija com:
+             python3 $repo/tools/conspit_wine_setup.py"
+  fi
+
+  # ⚠️ A pegadinha que custou o projeto inteiro: ate 2026-08-15 este setup
+  # escrevia em Services\winebus\PARAMETERS, subchave que o driver nunca le
+  # (o winebus.sys documenta a chave como Services\WineBus). Tudo era
+  # ignorado em silencio. Se a subchave ainda existir, ela confunde quem for
+  # diagnosticar.
+  if grep -q 'Services\\\\winebus\\\\Parameters' "$reg" 2>/dev/null; then
+    aviso "sobrou a subchave winebus\\Parameters (inerte -- o driver nao a le)" \
+          "python3 $repo/tools/conspit_wine_setup.py   (ela e' removida)"
+  fi
+
+  # Cada device presente deve estar no EnableHidraw. Nao e' obrigatorio
+  # (o Enable SDL=0 ja cobre), mas e' o que documenta a intencao.
+  if [[ $com_hw -eq 1 ]]; then
+    faltando=()
+    for pid in "${pids_presentes[@]}"; do
+      grep -qi "${VID}:${pid}" "$reg" 2>/dev/null || faltando+=("$VID:$pid")
+    done
+    if [[ ${#faltando[@]} -eq 0 ]]; then
+      ok "EnableHidraw cobre os ${#pids_presentes[@]} device(s) presentes"
+    else
+      aviso "EnableHidraw nao lista: ${faltando[*]}" \
+            "deve funcionar assim mesmo (Enable SDL=0 cobre), mas para
+             registrar: python3 $repo/tools/conspit_wine_setup.py"
+    fi
+  fi
+
+  # O shim antigo escondia o device real do DirectInput neste prefixo. Se a
+  # chave sobrou, o app deixa de ver os eixos dos pedais.
+  if grep -q '"CONSPIT CPP.LITE"="disabled"' "$pfx/user.reg" 2>/dev/null; then
+    falha "sobrou a entrada que esconde os pedais do DirectInput" \
+          "era do shim, que foi removido. Remova:
+             WINEPREFIX=$pfx wine reg delete 'HKCU\\Software\\Wine\\DirectInput\\Joysticks' /v 'CONSPIT CPP.LITE' /f"
   fi
 fi
 
