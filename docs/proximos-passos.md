@@ -192,12 +192,108 @@ explícita.)
 
 ---
 
+## 6. Integração com a telemetria do jogo
+
+Levantado em 2026-08-15 depois de o usuário testar: **o ConspitLink não reconhece que o jogo
+está aberto** (fica em `Not Started` ao lado de `Select Game`).
+
+### São TRÊS problemas empilhados, não um
+
+Investigado no binário e no prefixo. O que é **medido** vs. o que é **inferido** está
+marcado.
+
+#### (a) Detecção do jogo — enumeração de processos
+
+**Medido:** o `ConspitLink2.0.exe` importa `CreateToolhelp32Snapshot` e `OpenProcess`.
+
+**Inferido:** é assim que ele decide se o jogo está rodando.
+
+⚠️ Sob Wine, `CreateToolhelp32Snapshot` enxerga **apenas processos do mesmo wineserver**, ou
+seja, do mesmo prefixo. Um jogo rodando no Proton está em **outro prefixo** e é invisível; um
+jogo nativo Linux é invisível de qualquer forma. Isso explica o `Not Started` **sozinho**,
+independentemente de a telemetria estar chegando ou não.
+
+#### (b) Localização da instalação — a chave do Steam não existe no prefixo
+
+**Medido:** o binário contém `HKEY_CURRENT_USER\SOFTWARE\Valve\Steam`, `SteamPath`,
+`/config/libraryfolders.vdf`, `steamapps`, `/steamapps/common/` e caminhos específicos como
+`SteamLibrary/steamapps/common/Le Mans Ultimate/`. O `GameMatchSteamGame.json` mapeia cada ID
+interno para o **nome de exibição do jogo no Steam**.
+
+**Medido:** `HKCU\SOFTWARE\Valve\Steam\SteamPath` **não existe** neste prefixo
+(`reg query` → *Unable to find the specified registry value*). O Steam real do usuário é o
+**nativo Linux**, em `~/.local/share/Steam`, que nunca escreve no registro do prefixo.
+
+**Consequência:** o app não acha a biblioteca do Steam → não acha a pasta do jogo → não
+consegue ler nem **escrever** a configuração de telemetria do jogo.
+
+✅ **Este é o mais barato de corrigir, e é o mesmo padrão do nó PnP da serial:** criar
+`HKCU\SOFTWARE\Valve\Steam\SteamPath` apontando para o caminho Windows do Steam nativo —
+`Z:\home\<usuário>\.local\share\Steam` (o `z:` do prefixo já aponta para `/`).
+**Deve ser o primeiro experimento.**
+
+#### (c) Transporte da telemetria — dois regimes, com destinos opostos
+
+**Medido:** o binário contém `127.0.0.1`, `20777` e `20778` (as portas da família F1), e
+nomes de memória compartilhada como `LMU_Data`, `LMU_SharedMemoryLockData`,
+`rFactor2SharedMemoryMapPlugin64.dll`. Os símbolos do `.pdb` trazem
+`ACEvoTelemetry::attach` / `::detach` / `::SharedMemoryHandle`.
+
+| regime | jogos | atravessa a fronteira Wine/Proton? |
+|---|---|---|
+| **UDP** | F1 22/23/24/25, DiRT Rally 2.0, EA WRC, WRC Generations, FH5, FM8 | ✅ **sim** — é só rede no kernel Linux |
+| **memória compartilhada** | AC, ACC, AC EVO, AC Rally, iRacing, AMS2, rFactor 2, LMU, RaceRoom, ETS2, RBR | ❌ **não** — o namespace de objetos do wineserver é por prefixo |
+
+### A cadeia provável, e por que a ordem importa
+
+```
+SteamPath ausente
+   └─> app não acha a pasta do jogo
+        └─> não escreve a config de telemetria UDP do jogo
+             └─> nenhum dado chega
+E, em paralelo e independente:
+CreateToolhelp32Snapshot só vê o próprio prefixo
+   └─> "Not Started" mesmo que a telemetria chegasse
+```
+
+### Plano de ataque proposto
+
+1. **Escrever o `SteamPath`** no prefixo e reabrir o app. Barato, reversível, e destrava (b).
+   Verificar se ele passa a listar os jogos instalados.
+2. **Testar um jogo UDP** (F1 ou DiRT Rally 2.0) — é o único regime que pode funcionar com o
+   jogo no Proton e o app no prefixo dele. Configurar a saída de telemetria do jogo para
+   `127.0.0.1:20777` **na mão**, se o app não conseguir escrever sozinho.
+3. **Verificar se o `Not Started` sobrevive** mesmo com telemetria chegando. Se sim, confirma
+   que a detecção é por processo e é um problema separado.
+4. **Só então** avaliar o caminho caro dos jogos de memória compartilhada: rodar o
+   ConspitLink **dentro do prefixo do Proton do jogo**. ⚠️ O Proton roda em container
+   `pressure-vessel`, que restringe o `/dev` visível — risco direto para o acesso a
+   `/dev/hidraw*` de que o app depende. Ver seção 11.4 do CLAUDE.md do projeto irmão
+   `~/apps/diy-ffb-pedal-linux/`.
+
+### O que isso significa para os haptics e o dash
+
+O modo `Customize` de vibração dos pedais e o dash dos volantes são alimentados **pela
+telemetria que o próprio ConspitLink recebe**. Ou seja: eles dependem inteiramente deste
+ponto. Enquanto a telemetria não chega, os haptics em jogo e o dash não têm fonte — o botão
+`Test` funciona porque não usa telemetria.
+
+Os outros dois modos de vibração (`SimHub`, `iRacing`) esperam software externo, o que sob
+Linux é outro problema em aberto.
+
+---
+
 ## Ordem sugerida de execução
 
 ```
-1. prefixo (XDG)        bloqueia o 2
-2. atalho .desktop
-4. generalizar devices  muda o conteúdo do README
-5. README               por último, para documentar o estado final
-3. tools/               descartado, exceto o Makefile
+6a. SteamPath           experimento barato e isolado; pode ir a qualquer momento
+1.  prefixo (XDG)       bloqueia o 2
+2.  atalho .desktop
+6b. telemetria UDP      depende de 6a; é o que destrava haptics e dash
+4.  generalizar devices muda o conteúdo do README
+5.  README              por último, para documentar o estado final
+3.  tools/              descartado, exceto o Makefile
 ```
+
+O ponto **6a** (escrever o `SteamPath`) é independente de todos os outros e é o de melhor
+relação custo/informação — vale rodar antes de qualquer coisa, só para saber onde estamos.
