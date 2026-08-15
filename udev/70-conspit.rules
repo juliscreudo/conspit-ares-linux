@@ -2,10 +2,12 @@
 #
 # Um arquivo so para todos os dispositivos Conspit (VID 3514) da bancada:
 #
-#   3514:0301  CONSPIT ARES  base Ares Platinum 20Nm
-#                            -> CDC serial (/dev/ttyACM*) + HID joystick c/ FFB
-#   3514:0300  CONSPIT       2o MCU da base (canal do dash), HID vendor puro
+#   3514:0301  CONSPIT ARES      base Ares Platinum 20Nm
+#                                -> CDC serial (/dev/ttyACM*) + HID joystick c/ FFB
+#   3514:0300  CONSPIT           2o MCU da base (canal do dash), HID vendor puro
 #   3514:0005  CONSPIT CPP.LITE  pedais -> HID joystick 3 eixos + canal vendor
+#   3514:0007  CONSPIT H.AO      volante -> HID joystick (7 eixos, botoes,
+#                                hat) + canal vendor (luzes, paddles, dash)
 #
 # 0301 e 0300 aparecem com um unico cabo ligado ao PC porque ha um hub de
 # 4 portas DENTRO da base.
@@ -49,16 +51,24 @@
 # --------------------------------------------------------------------------
 # Casam so por idVendor, de proposito: qualquer periferico Conspit ligado na
 # bancada (base, 2o MCU, pedais, volantes) fica acessivel sem uma regra nova.
+# Foi o que fez o volante H.AO funcionar no dia em que foi ligado, sem
+# tocar neste arquivo.
 #
 # Por padrao /dev/hidraw* e root-only. Sem isto o ConspitLink nao consegue
 # falar com os canais proprietarios:
 #
 #   hidraw da 0301  -> interface de comandos por HID (report ID 0xA1)
 #   hidraw da 0300  -> 2o MCU da base, por onde passa a telemetria do dash
+#   hidraw da 0005  -> canal vendor dos pedais (protocolo `$`)
+#   hidraw da 0007  -> canal vendor do volante (luzes, paddles, dash)
 #
-# O logind ja da ACL para o event* da base porque ela e' classificada como
-# joystick (ver 70-uaccess.rules:61 no cabecalho), mas nao da para hidraw
-# nem para o event* da 0300, que nao e' joystick.
+# ⚠️ Isto virou MAIS critico desde que o winebus passou a usar o backend
+# hidraw (ver tools/conspit_wine_setup.py): agora e' por hidraw que o app
+# fala com TODOS os devices, nao so com os canais vendor.
+#
+# O logind ja da ACL para o event* da base e do volante porque sao
+# classificados como joystick (ver 70-uaccess.rules:61 no cabecalho), mas
+# nao da para hidraw nem para o event* da 0300, que nao e' joystick.
 #
 # TAG+="uaccess" faz o logind conceder ACL ao usuario da sessao ativa --
 # preferivel a MODE="0666", que liberaria para qualquer usuario da maquina.
@@ -66,13 +76,6 @@
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3514", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="3514", TAG+="uaccess"
-
-# A linha acima casa por ATTRS{idVendor}, que so existe em device USB. O
-# device HID virtual do tools/cpp_hid_shim.py nao tem pai USB nenhum, entao
-# precisa de outro discriminador: o modalias do proprio device HID, que
-# existe nos dois casos (b=bus, v=vendor, p=product).
-#   hid:b0003g0001v00003514p00000005
-KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{modalias}=="hid:b*v00003514p*", TAG+="uaccess"
 
 
 # --------------------------------------------------------------------------
@@ -126,6 +129,10 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=
 # Por isso as regras abaixo discriminam por ATTRS{capabilities/abs}=="e"
 # e criam um symlink proprio, estavel: /dev/input/conspit-cpp-lite
 #
+# (O volante H.AO tem a mesma estrutura de duas collections, mas NAO sofre
+# disso: como ele tem botoes, o input_id classifica a collection de joystick
+# sozinho e o by-id sai correto -- ver secao 4.)
+#
 # Se um dia o firmware mudar o conjunto de eixos, esse "e" muda e o symlink
 # some (falha visivel, nao silenciosa). Redescubra com:
 #   cat /sys/class/input/input*/capabilities/abs
@@ -164,26 +171,29 @@ SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID
 
 
 # --------------------------------------------------------------------------
-# 4. Joystick virtual do tools/cpp_hid_shim.py
+# 4. Volante H.AO (0007): zerar fuzz e deadzone dos eixos
 # --------------------------------------------------------------------------
-# O shim cria um segundo device virtual expondo os tres eixos NA ORDEM que o
-# ConspitLink espera (ver "Pedais CPP.LITE" no CLAUDE.md). Para o Wine
-# enxerga-lo faltavam duas coisas, ambas medidas em 2026-08-14:
+# Medido em 2026-08-15, no dia em que o volante foi ligado pela primeira vez.
+# Ele tambem expoe duas collections (joystick + canal vendor de 64 bytes),
+# mas ao contrario dos pedais NAO precisa de tratamento especial: como tem
+# botoes, o input_id classifica a collection de joystick sozinho, o
+# ID_INPUT_JOYSTICK vem de graca e o by-id sai correto --
+# `-event-joystick` no joystick, `-event-if00` no canal vendor.
 #
-#   - ACL no event*: o Wine roda como o usuario e precisa ABRIR o no'. Sem
-#     isso ele ignora o device em silencio -- foi o que aconteceu.
-#   - ID_INPUT_JOYSTICK: o backend evdev do winebus so considera devices
-#     marcados como joystick.
+# Os sete eixos analogicos vinham todos com fuzz/flat ruins:
 #
-# Casa por ATTRS{name}, que e' o nome dado na criacao do device virtual.
-# Precisa ser UMA chave ATTRS so: name fica no device de input e modalias no
-# device HID pai, e o udev exige que ATTRS multiplos casem no MESMO device.
+#   ABS_Y, ABS_Z, ABS_RUDDER      0..4095    fuzz  15  flat  255   (~6%)
+#   ABS_RX, ABS_RY, ABS_RZ,
+#   ABS_THROTTLE                  0..65535   fuzz 255  flat 4095   (~6.25%)
 #
-# ⚠️ Enquanto o shim roda, este device aparece nos jogos como uma pedaleira
-# a mais. Por isso o run-conspitlink.sh sobe o shim junto com o app e o
-# derruba ao fechar -- fora do ConspitLink ele nao existe.
+# Nos paddles Hall (embreagem analogica, bite point) isso e' curso morto no
+# comeco do acionamento -- exatamente o que se compra um paddle Hall para
+# nao ter. ABS_HAT0X/Y ja vem 0/0 e nao sao afetados.
+#
+# ⚠️ ENV{ID_INPUT_JOYSTICK}=="1" restringe ao no' real: sem isso o RUN+
+# rodaria tambem no event* do canal vendor.
+#
+# Conferir depois:
+#   python3 tools/evdev_info.py /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick
 
-# O RUN+ zera fuzz/flat tambem no device virtual: ele nasce com fuzz 15 e
-# flat 255 (defaults do hid-generic), ou seja ~6% de curso morto no comeco
-# de cada pedal -- o mesmo defeito que a secao 2 corrige no device real.
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="CONSPIT CPP.LITE Axis", TAG+="uaccess", ENV{ID_INPUT_JOYSTICK}="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=="0007", ENV{ID_INPUT_JOYSTICK}=="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
