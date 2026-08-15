@@ -19,7 +19,9 @@ Configuração e telemetria de **todos** os dispositivos pelo ConspitLink sob Wi
 telemetria de jogo chegando ao app (haptics `Customize` + dash do volante, validado no Le
 Mans Ultimate). FFB nativo nos jogos independe do Wine. `check-setup.sh` fecha com 0 falhas.
 
-Pendências conhecidas: ver [docs/proximos-passos.md](docs/proximos-passos.md).
+Pendências conhecidas ficam em `docs/proximos-passos.md` — **notas pessoais do autor, fora
+do git** (o arquivo pode não existir num clone). O que é público está no `git log` e no
+[historico-investigacao.md](docs/historico-investigacao.md).
 
 ## Hardware
 

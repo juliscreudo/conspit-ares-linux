@@ -12,3 +12,6 @@ ConspitLink2.0.exe
 
 # binarios das ferramentas de diagnostico (make -C tools)
 tools/*.exe
+
+# notas de planejamento pessoais (ficam no disco, fora do git)
+docs/proximos-passos.md
