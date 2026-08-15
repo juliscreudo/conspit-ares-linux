@@ -187,6 +187,24 @@ O script deve terminar com `tudo certo.`. Abra:
 tools/run-conspitlink.sh
 ```
 
+### Atalho no menu (opcional)
+
+Para abrir clicando, em vez de pelo terminal:
+
+```bash
+tools/instalar-atalho.sh              # instala
+tools/instalar-atalho.sh --remover    # desinstala
+```
+
+Ele reaproveita o ícone que o Wine já extraiu do `.exe` e aponta para o
+`run-conspitlink.sh` — ou seja, o atalho passa pelas mesmas verificações e sobe a ponte de
+telemetria.
+
+> O Wine cria um atalho **próprio** ao instalar o app, em
+> `~/.local/share/applications/wine/Programs/`. Ele funciona, mas executa o `.lnk` direto:
+> pula as verificações e não sobe a ponte. O nosso mora fora daquela pasta justamente para o
+> `winemenubuilder` não o sobrescrever. O script diz como esconder o do Wine, se quiser.
+
 > ⚠️ **Rode o `conspit_wine_setup.py` de novo ao ligar um device Conspit novo.** Ele monta a
 > lista de dispositivos a partir do que está no barramento. (Na prática o device novo já
 > funciona sem isso, pela rede de segurança descrita abaixo — mas a lista é o que documenta
@@ -335,6 +353,7 @@ do min/max — ver [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md)).
 | `tools/conspit_wine_setup.py` | nó PnP da serial + backend hidraw do winebus |
 | `tools/hidenum.c` | enumera HID de dentro do prefixo Wine (diagnóstico) |
 | `tools/dinput_axes.c` | mede o mapeamento de eixos do DirectInput no prefixo (diagnóstico) |
+| `tools/instalar-atalho.sh` | cria o atalho do app no menu (usa o ícone do Wine) |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |
 
