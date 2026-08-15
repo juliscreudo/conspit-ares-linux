@@ -30,6 +30,12 @@ ninguém fecha isto num produto proprietário.
 | **Telemetria de jogo → haptics e dash** | ✅ via [Winecarte](https://github.com/srounce/winecarte) — validado no Le Mans Ultimate |
 | ↳ iRacing | ❌ o Winecarte não exporta o mapa do iRacing |
 
+> **Tem outro periférico Conspit?** (Ares Apex, CPP.EVO/Apex, 290GP, PW1, câmbio, freio de
+> mão.) Boa parte do projeto casa por **vendor**, não por modelo — o volante H.AO funcionou
+> 100% no dia em que foi ligado, sem código específico. Veja
+> [docs/adicionar-dispositivo.md](docs/adicionar-dispositivo.md) para o roteiro de
+> diagnóstico e a matriz do que foi testado.
+
 A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
 `3514:0301`. Detalhes técnicos e histórico da investigação em [CLAUDE.md](CLAUDE.md); o
 protocolo que o ConspitLink fala está em [docs/protocolo-conspitlink.md](docs/protocolo-conspitlink.md)
@@ -353,6 +359,7 @@ do min/max — ver [docs/protocolo-cpp-lite.md](docs/protocolo-cpp-lite.md)).
 | `tools/conspit_wine_setup.py` | nó PnP da serial + backend hidraw do winebus |
 | `tools/hidenum.c` | enumera HID de dentro do prefixo Wine (diagnóstico) |
 | `tools/dinput_axes.c` | mede o mapeamento de eixos do DirectInput no prefixo (diagnóstico) |
+| `tools/conspit-prefixo.sh` | resolve o caminho do prefixo (incluído pelos outros) |
 | `tools/instalar-atalho.sh` | cria o atalho do app no menu (usa o ícone do Wine) |
 | `tools/run-conspitlink.sh` | abre o ConspitLink no prefixo isolado |
 | `udev/70-conspit.rules` | zera fuzz/deadzone e libera hidraw |

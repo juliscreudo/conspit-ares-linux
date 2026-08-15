@@ -79,31 +79,47 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="3514", TAG+="uaccess"
 
 
 # --------------------------------------------------------------------------
-# 2. Base Ares (0301): zerar fuzz e deadzone dos eixos
+# 2. Zerar fuzz e deadzone -- TODO joystick Conspit
 # --------------------------------------------------------------------------
-# O hid-generic aplica defaults ruins. Medido no hardware em 2026-08-12,
-# antes desta regra:
+# O hid-generic aplica defaults ruins em tudo que passou por aqui. Medido no
+# hardware, antes desta regra:
 #
-#   ABS_X          min -32767  max 32767  fuzz 255  flat 4095
-#   demais eixos   min      0  max  4095  fuzz  15  flat  255
+#   base 0301   ABS_X         min -32767 max 32767  fuzz 255  flat 4095
+#               demais eixos  min      0 max  4095  fuzz  15  flat  255
+#   pedais 0005 3 eixos       min      0 max  4095  fuzz  15  flat  255
+#   volante 0007 4 eixos      min      0 max  4095  fuzz  15  flat  255
+#                3 eixos      min      0 max 65535  fuzz 255  flat 4095
 #
-# fuzz=255 no eixo do volante filtra qualquer variacao menor que ~0.4% do
-# curso, o que serrilha o esterco; flat=4095 declara uma zona morta de
-# ~12.5% em volta do centro. Ambos precisam ir a zero.
+# fuzz=255 no eixo do volante filtra variacao menor que ~0.4% do curso, o que
+# serrilha o esterco; flat=4095 declara zona morta de ~12.5% no centro. Nos
+# pedais e nos paddles Hall, o flat vira curso morto no INICIO do acionamento
+# -- exatamente o que se compra um paddle Hall para nao ter.
+#
+# ⚠️ CASA POR VENDOR, SEM PID, DE PROPOSITO (desde 2026-08-15). Antes havia
+# uma linha por dispositivo, o que era conservadorismo: os valores mudam por
+# device, mas a CORRECAO e' sempre a mesma (zerar os dois). Uma linha so'
+# cobre base, pedais, volante e qualquer periferico Conspit futuro -- que e'
+# o mesmo principio da secao 1, e foi o que fez o H.AO funcionar no dia em
+# que foi ligado.
+#
+# O `ENV{ID_INPUT_JOYSTICK}=="1"` restringe ao no' de eixos real: sem ele a
+# regra tentaria rodar tambem no canal vendor dos pedais/volante, que nao e'
+# um controle. Para os devices sem botao (pedais), quem poe essa propriedade
+# e' a secao 3 abaixo -- por isso ela vem ANTES desta na ordem do arquivo.
 #
 # Depende do binario `evdev-joystick`:
 #   Fedora          sudo dnf install linuxconsoletools
 #   Arch/CachyOS    sudo pacman -S linuxconsole
 #
-# O RUN+ abaixo usa caminho ABSOLUTO porque o udev nao tem PATH utilizavel.
-# Se na sua distro o binario nao estiver em /usr/bin, ajuste a linha:
+# O RUN+ usa caminho ABSOLUTO porque o udev nao tem PATH utilizavel. Se na
+# sua distro o binario nao estiver em /usr/bin, ajuste a linha:
 #   command -v evdev-joystick
 # `tools/check-setup.sh` verifica isso e avisa.
 #
 # Conferir depois (fuzz e flat devem estar zerados):
-#   python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-if02-event-joystick
-
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=="0301", ENV{ID_INPUT_JOYSTICK}=="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
+#   python3 tools/evdev_info.py /dev/input/conspit-cpp-lite
+#   python3 tools/evdev_info.py /dev/input/by-id/usb-CONSPIT_CONSPIT_ARES_*-event-joystick
+#   python3 tools/evdev_info.py /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick
 
 
 # --------------------------------------------------------------------------
@@ -160,40 +176,26 @@ SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=
 # joystick cria um controle fantasma de 1 eixo nos jogos.
 SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID}=="0005", ATTRS{capabilities/abs}=="e", ENV{ID_INPUT_JOYSTICK}="1"
 
-# (b) Symlink estavel + zerar fuzz/flat dos tres pedais.
-# Medido antes desta regra: ABS_Y/ABS_Z/ABS_RX, min 0 max 4095, fuzz 15,
-# flat 255. O flat=255 come os primeiros ~6% do curso de CADA pedal -- num
-# pedal de freio isso e' curso morto no inicio do acionamento.
-SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID}=="0005", ATTRS{capabilities/abs}=="e", SYMLINK+="input/conspit-cpp-lite", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
-
-# Conferir depois (fuzz e flat devem estar zerados nos tres eixos):
-#   python3 tools/evdev_info.py /dev/input/conspit-cpp-lite
+# (b) Symlink estavel.
+# O fuzz/flat NAO e' tratado aqui: a linha generica da secao 4 cobre estes
+# pedais, porque a linha (a) acima ja marcou o device como joystick.
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_VENDOR_ID}=="3514", ENV{ID_MODEL_ID}=="0005", ATTRS{capabilities/abs}=="e", SYMLINK+="input/conspit-cpp-lite"
 
 
 # --------------------------------------------------------------------------
-# 4. Volante H.AO (0007): zerar fuzz e deadzone dos eixos
+# 4. A correcao de fuzz/flat, para todo joystick Conspit
 # --------------------------------------------------------------------------
-# Medido em 2026-08-15, no dia em que o volante foi ligado pela primeira vez.
-# Ele tambem expoe duas collections (joystick + canal vendor de 64 bytes),
-# mas ao contrario dos pedais NAO precisa de tratamento especial: como tem
-# botoes, o input_id classifica a collection de joystick sozinho, o
-# ID_INPUT_JOYSTICK vem de graca e o by-id sai correto --
-# `-event-joystick` no joystick, `-event-if00` no canal vendor.
+# ⚠️ VEM POR ULTIMO DE PROPOSITO. Os devices sem botao (pedais) so' viram
+# "joystick" na secao 3; se esta linha rodasse antes, nao casaria com eles.
+# Dentro de um arquivo, o udev processa as regras na ordem em que aparecem.
 #
-# Os sete eixos analogicos vinham todos com fuzz/flat ruins:
+# O volante H.AO (0007) e a base (0301) nao precisam da secao 3: como tem
+# botoes, o builtin input_id ja os classifica, e o ID_INPUT_JOYSTICK vem de
+# graca. Foi por isso que o H.AO funcionou no dia em que foi ligado, sem
+# nenhuma linha especifica para ele -- e e' o mesmo motivo de esta regra ser
+# por vendor.
 #
-#   ABS_Y, ABS_Z, ABS_RUDDER      0..4095    fuzz  15  flat  255   (~6%)
-#   ABS_RX, ABS_RY, ABS_RZ,
-#   ABS_THROTTLE                  0..65535   fuzz 255  flat 4095   (~6.25%)
-#
-# Nos paddles Hall (embreagem analogica, bite point) isso e' curso morto no
-# comeco do acionamento -- exatamente o que se compra um paddle Hall para
-# nao ter. ABS_HAT0X/Y ja vem 0/0 e nao sao afetados.
-#
-# ⚠️ ENV{ID_INPUT_JOYSTICK}=="1" restringe ao no' real: sem isso o RUN+
-# rodaria tambem no event* do canal vendor.
-#
-# Conferir depois:
-#   python3 tools/evdev_info.py /dev/input/by-id/usb-Conspit_CONSPIT_H.AO_*-event-joystick
+# O ENV{ID_INPUT_JOYSTICK}=="1" restringe ao no' de eixos real: sem ele o
+# RUN+ rodaria tambem no event* do canal vendor, que nao e' um controle.
 
-SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ATTRS{idProduct}=="0007", ENV{ID_INPUT_JOYSTICK}=="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="3514", ENV{ID_INPUT_JOYSTICK}=="1", RUN+="/usr/bin/evdev-joystick --s %E{DEVNAME} --f 0 --d 0"
