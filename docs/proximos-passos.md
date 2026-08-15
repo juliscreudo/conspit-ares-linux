@@ -25,6 +25,26 @@ são navegáveis, e mover quebraria dezenas de referências na documentação.)
 Os commits estão todos locais. Antes do primeiro push: varrer o **histórico inteiro** (não
 só os diffs) por serial da base, e-mail, caminhos pessoais que não deveriam vazar.
 
+### 4. SimHub enxergar o H.AO (LEDs por telemetria)
+
+O SimHub (sob Wine, via linux-simracing-utils) tem perfil para o `Conspit H.AO HUB (LEDs
+and buttons only)`, mas fica em `Searching device...` — não acha o volante.
+
+**Diagnóstico já feito (2026-08-15, `hidenum` no prefixo do SimHub):** o canal vendor de
+64 bytes do H.AO (usage `0x3A`, por onde os LEDs são escritos) **não existe naquele
+prefixo** — os devices aparecem como gamepad sintetizado (usage `0x05`, `out 0` em todos).
+É a mesma classe de problema que o ConspitLink tinha antes do backend hidraw.
+
+Curioso: aquele prefixo já tem `Enable SDL=0` na chave certa, e ainda assim os devices
+saem sintetizados. Hipóteses: o wineserver de lá está no ar desde antes da opção valer, ou
+falta o `EnableHidraw`. Decidir exige **reiniciar o wineserver do SimHub** (mata a sessão)
+e medir de novo com `hidenum` — 10 minutos, quando for conveniente.
+
+**Divisão de escopo:** fazer o Wine entregar o canal HID real ao SimHub é know-how DESTE
+projeto (mesma receita: `EnableHidraw` + restart; o ACL de hidraw a nossa regra udev já dá
+para a máquina toda). Os perfis de LED e a telemetria dentro do SimHub são território do
+SimHub/linux-simracing-utils — fora do escopo daqui.
+
 ## Aberto, sem prioridade definida
 
 - **iRacing sem telemetria** — o Winecarte não exporta o mapa dele. Se alguém atacar:
