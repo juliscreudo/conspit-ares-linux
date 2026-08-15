@@ -43,8 +43,22 @@ botões**. Um device só de eixos não é classificado, e aí:
 
 Foi exatamente o que aconteceu com o CPP.LITE. A seção 3 da regra resolve, mas ela precisa
 discriminar o nó real do canal vendor por `ATTRS{capabilities/abs}`, **e esse valor muda com
-o conjunto de eixos** — no CPP.LITE é `e` (três eixos). Num CPP.EVO com quatro eixos, ou num
-freio de mão com um, será outro. **Só quem tem o hardware descobre.**
+o conjunto de eixos** — no CPP.LITE é `e` (três eixos: `ABS_Y`, `ABS_Z`, `ABS_RX`). Num freio
+de mão de um eixo será outro. **Só quem tem o hardware descobre.**
+
+Quem provavelmente cai aqui:
+
+- **CPP.EVO / CPP.Apex** — se tiverem os mesmos 3 eixos do CPP.LITE, o `capabilities/abs`
+  deve ser `e` também, e só falta acrescentar o PID. É uma linha:
+
+  ```
+  # copie as duas linhas da secao 3 e troque ENV{ID_MODEL_ID}=="0005"
+  # pelo PID do seu device; confirme o "e" com:
+  #   cat /sys/class/input/inputNN/capabilities/abs
+  ```
+
+- **Freio de mão** — 1 eixo, zero botões. Caso 1 quase garantido.
+- **Câmbio H** — ver abaixo; provavelmente também é eixo, não botão.
 
 ### 2. Ordem dos eixos diferente
 
@@ -61,6 +75,19 @@ provavelmente fala algo parecido, mas isso é palpite, não medição.
 
 O H.AO tem 6 paddles Hall, que viram **eixos**. Um volante com paddles digitais teria
 **botões** e nenhum eixo — a correção de fuzz/flat simplesmente não se aplica.
+
+### 5. Câmbio: não presuma que é botão
+
+O reflexo é achar que câmbio é botão — uma marcha, uma tecla. **Provavelmente não é o caso
+nos câmbios Conspit**: os que têm os dois modos (**sequencial e H**) costumam usar **sensores
+Hall** lendo a posição da alavanca, e sensor Hall vira **eixo**, não botão.
+
+Se for assim, o câmbio cai no **caso 1** junto com os pedais e o freio de mão: eixos, nenhum
+botão, `input_id` não classifica como joystick. E há uma consequência a mais — a correção de
+fuzz/flat passa a **importar** para ele: um `flat` alto no eixo da alavanca é zona morta em
+volta de cada posição, o que pode atrasar ou perder o engate.
+
+Diagnóstico: rode o passo 3 do roteiro e veja se aparece `ABS_*` em vez de `BTN_*`.
 
 ---
 
@@ -160,9 +187,9 @@ estão marcadas.
 | Pedais CPP.LITE | `0005` | ✅ testado |
 | Volante H.AO | `0007` | ✅ testado |
 | Ares Apex | ? | ⚠️ não testado — mesma família OpenFFBoard, deve funcionar |
-| CPP.EVO / CPP.Apex | ? | ⚠️ não testado — ver caso 1 (sem botões) e caso 3 (protocolo) |
+| CPP.EVO / CPP.Apex | ? | ⚠️ não testado — provavelmente 3 eixos como o CPP.LITE: caso 1, e o `capabilities/abs` deve ser o mesmo `e` (falta só o PID). Protocolo do canal vendor: caso 3 |
 | 290GP / PW1 | ? | ⚠️ não testado — se tiver botões, deve sair de graça como o H.AO |
-| Câmbio H | ? | ⚠️ não testado — provavelmente só botões, sem eixo |
+| Câmbio (sequencial + H) | ? | ⚠️ não testado — **provavelmente eixos, não botões** (sensor Hall lendo a alavanca): caso 1 e caso 5 |
 | Freio de mão | ? | ⚠️ não testado — **caso 1 é quase certo**: 1 eixo, zero botões |
 
 O `.pdb` do ConspitLink traz classes `Ace15`, `CppLite`, `CppPro`, `CppEvo`, `FR280`,
