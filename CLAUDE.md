@@ -250,12 +250,73 @@ São 18 jogos em `JsonConfigure/GameSettingCenter.json`, divididos em:
   Wine/Proton sem esforço** — é só rede no kernel Linux. Jogo no Proton + ConspitLink no
   Wine funciona.
 - **Memória compartilhada** — AC, ACC, AC EVO, AC Rally, iRacing, AMS2, rFactor 2,
-  Le Mans Ultimate, RaceRoom, ETS2, RBR. Aqui o ConspitLink precisa rodar **dentro do mesmo
-  prefixo do jogo**, porque o namespace de objetos do wineserver é por prefixo. ⚠️ E a seção
-  11.4 do CLAUDE.md do pedal avisa: Proton roda em container `pressure-vessel`, que restringe
-  o `/dev` visível — risco real justamente para o acesso a device que o ConspitLink precisa.
+  Le Mans Ultimate, RaceRoom, ETS2, RBR. O namespace de objetos do wineserver é **por
+  prefixo**: o jogo está no prefixo do Proton, o ConspitLink no dele, e um não vê a memória
+  do outro. ✅ **Resolvido em 2026-08-15 pelo Winecarte** — ver a seção adiante. A hipótese
+  antiga ("o ConspitLink precisa rodar dentro do prefixo do jogo") **não era necessária**.
 
 Nada disso bloqueia a fase 1 (configuração da base), que não usa telemetria de jogo nenhuma.
+
+### A telemetria de jogo, resolvida (2026-08-15)
+
+✅ **Validado com Le Mans Ultimate**: `Select Game` saiu de `Not Started` para **`Started`**,
+a telemetria alimentou o app, os **haptics no modo `Customize` passaram a vibrar conforme o
+efeito**, e o **dash / rev lights do volante** receberam os dados.
+
+#### Como o app sabe que o jogo está rodando
+
+⚠️ **Não é enumeração de processos.** O binário importa `CreateToolhelp32Snapshot` e
+`OpenProcess`, o que me levou a inferir isso — e **estava errado**. Os símbolos do `.pdb`
+mostram uma família `GanmeOf<Jogo>` (o typo é deles) com **`GanmeOfACC::Get_GameStatus`** ao
+lado de `Get_InitSuccess`, e um `GameData::Slot_initShareMemory`.
+
+**A detecção é o próprio attach à memória compartilhada.** Por isso detecção e telemetria são
+**o mesmo problema**, e se resolveram juntas: entregue a shm no prefixo e o `Started` vem de
+brinde. Não perca tempo procurando um mecanismo separado de detecção.
+
+#### A ponte: Winecarte
+
+https://github.com/srounce/winecarte — instalado aqui via
+`~/apps/linux-simracing-utils/` (do mesmo autor). Três componentes:
+
+| componente | papel |
+|---|---|
+| `winecarte-run %command%` | nas opções de lançamento do jogo no Steam; injeta no prefixo do Proton e **exporta** a shm para `/dev/shm` |
+| `winehub` | roda contra um **prefixo alvo** e **importa** `/dev/shm` para dentro dele |
+| `wine2linux.exe` | o motor que os dois injetam; copia os named file mappings Win32 ↔ arquivos Linux |
+
+O `winehub` aceita **qualquer** prefixo alvo (`--prefix`, ou `$WINEPREFIX`), e `/dev/shm`
+permite vários consumidores — então o ConspitLink é só um segundo alvo, convivendo com o do
+SimHub. `tools/run-conspitlink.sh` sobe essa metade sozinho; a metade de cima é manual, nas
+opções do jogo no Steam.
+
+#### Os nomes batem — era a pergunta que decidia tudo
+
+Conferido com `strings -el` (o app é Qt, guarda em UTF-16 — `strings` sem `-el` não acha):
+
+| jogo | ConspitLink abre | Winecarte exporta | |
+|---|---|---|---|
+| Assetto Corsa | `Local\acpmf_physics/graphics/static` | idem | ✅ |
+| Le Mans Ultimate | `LMU_Data` | `LMU_Data` + `LMU_Data_Event` | ✅ **validado** |
+| rFactor 2 | `$rFactor2SMMP_*$` | idem | ✅ |
+| AC EVO | `Local\acevo_pmf_*` | idem | ✅ |
+| AMS2 / PCars2 | `$pcars2$` | idem | ✅ |
+| ETS2 / ATS | `Local\SCSTelemetry` | `Local\SHSCSTelemetry` | ⚠️ prefixo `SH` difere |
+| **iRacing** | `Local\IRSDKMemMapFileName` | **não exporta** | ❌ |
+
+⚠️ **iRacing não é coberto pelo Winecarte**, e é um dos jogos desta bancada. Se for atacar,
+o mapa é `Local\IRSDKMemMapFileName` + `Local\IRSDKDataValidEvent` + `IRSDK_BROADCASTMSG`.
+
+#### O app também não achava os jogos INSTALADOS — problema separado
+
+Ele lê `HKCU\SOFTWARE\Valve\Steam\SteamPath` e daí abre `config/libraryfolders.vdf` e
+`steamapps/common/` (há um `GameData::readVdf` no `.pdb`). Com **Steam nativo** essa chave não
+existe no prefixo — o Steam do Linux nunca escreve no registro do Wine.
+
+⚠️ Apontar `SteamPath` direto para o Steam via `Z:` **não basta**: os caminhos dentro do
+`libraryfolders.vdf` são Linux absolutos (`/home/...`), que como caminho Windows cairiam na
+raiz do drive atual. Por isso `conspit_wine_setup.py` monta `C:\SteamBridge` com o vdf
+reescrito para `Z:` e um symlink para o `steamapps` real.
 
 ### O que foi preciso para o app enxergar a base
 

@@ -23,7 +23,8 @@ de terceiros (Ultrawipf / Conspit) — este repo não redistribui nada disso.
 | ↳ base Ares: torque, range, filtros, presets, ângulo ao vivo | ✅ |
 | ↳ pedais CPP.LITE: curvas, calibração, haptics (`Customize`) | ✅ |
 | ↳ volante H.AO: botões, brilho, dashboard, paddles, Launch Control | ✅ |
-| Telemetria de jogo → dash dos volantes | não investigado ainda |
+| **Telemetria de jogo → haptics e dash** | ✅ via [Winecarte](https://github.com/srounce/winecarte) — validado no Le Mans Ultimate |
+| ↳ iRacing | ❌ o Winecarte não exporta o mapa do iRacing |
 
 A base é **OpenFFBoard 1.15.0** em hardware `F407VG` com driver **ODrive**, VID/PID próprio
 `3514:0301`. Detalhes técnicos e histórico da investigação em [CLAUDE.md](CLAUDE.md); o
@@ -210,6 +211,52 @@ exatamente como o Windows.
 > subchave. Escrever no lugar errado é ignorado **em silêncio** — foi o que atrasou este
 > projeto por três dias. Se for diagnosticar backend HID no Wine, o canal é
 > `WINEDEBUG=+hid` (o `+plugplay` **não** mostra essas decisões).
+
+---
+
+## Passo 4 — Telemetria de jogo (opcional)
+
+Necessário para os **haptics dos pedais no modo `Customize`** e para o **dash / rev lights do
+volante**, que o próprio ConspitLink alimenta. Nada disto é preciso para configurar a base,
+os pedais ou o volante.
+
+O problema: os jogos escrevem telemetria em memória compartilhada nomeada, e o namespace de
+objetos do wineserver é **por prefixo**. O jogo roda no prefixo do Proton, o ConspitLink no
+dele, e um não enxerga a memória do outro — o app fica em `Not Started` para sempre.
+
+Quem resolve é o **[Winecarte](https://github.com/srounce/winecarte)**, que faz a ponte em
+duas metades. Instale-o (o jeito mais fácil é o instalador
+[linux-simracing-utils](https://github.com/srounce/linux-simracing-utils), do mesmo autor) e:
+
+1. **No jogo**, em *Propriedades → Opções de Lançamento* no Steam:
+
+   ```
+   winecarte-run %command%
+   ```
+
+   Isto exporta a memória compartilhada do jogo para `/dev/shm`.
+
+2. **No ConspitLink**, nada a fazer: `tools/run-conspitlink.sh` sobe a outra metade sozinho
+   (o `winehub`, apontado para este prefixo) e avisa `ponte de telemetria: no ar`. Para
+   desligar, `--sem-ponte`.
+
+Entre numa sessão do jogo: o `Select Game` deve trocar de `Not Started` para **`Started`**.
+
+> A detecção **é** o attach à memória compartilhada — não há mecanismo separado. Se o
+> `Started` apareceu, a telemetria está chegando; se não apareceu, a ponte é que falhou.
+
+### Jogos cobertos
+
+Validado no **Le Mans Ultimate**. Os nomes dos mapas conferem também para **Assetto Corsa**,
+**AC EVO**, **rFactor 2** e **AMS2 / Project Cars 2**.
+
+> ❌ **iRacing não funciona por esta rota** — o Winecarte não exporta o mapa dele
+> (`Local\IRSDKMemMapFileName`).
+
+> Jogos de telemetria **UDP** (família F1, DiRT Rally 2.0, EA WRC, Forza) não precisam de
+> ponte nenhuma: UDP é rede no kernel e atravessa a fronteira Wine/Proton sozinho. Aponte a
+> telemetria do jogo para `127.0.0.1`. **Não testado aqui** — nenhum desses jogos nesta
+> bancada.
 
 ---
 
