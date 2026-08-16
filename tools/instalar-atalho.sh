@@ -93,16 +93,30 @@ DESKTOP
 chmod +x "$alvo"
 echo "   $alvo"
 
-# 3. O atalho que o Wine gerou aponta para o .lnk e pula os pre-flights.
-#    Nao apagamos (e' do winemenubuilder, ele o recria), so' avisamos.
+# 3. O atalho que o winemenubuilder gerou.
+#    Ele executa o .lnk direto (pulando os pre-flights) E carrega o caminho
+#    do prefixo HARDCODED -- ou seja, depois que o prefixo saiu do repo
+#    (2026-08-15) ele ficou apontando para uma pasta que nao existe mais e
+#    simplesmente nao abre. Dois "ConspitLink" no menu, um deles quebrado.
+#    Por isso removemos, em vez de so avisar.
+echo "3. Atalho duplicado do Wine..."
 wine_desktop="$apps/wine/Programs/Conspit Link 2.0"
 if [[ -d "$wine_desktop" ]]; then
-  echo
-  echo "nota: o Wine tem um atalho proprio em"
-  echo "  $wine_desktop"
-  echo "  ele funciona, mas pula as verificacoes e a ponte de telemetria."
-  echo "  para escondê-lo do menu:"
-  echo "    rm -rf \"$wine_desktop\""
+  rm -rf "$wine_desktop"
+  echo "   removido: $wine_desktop"
+  echo "   (era o do winemenubuilder: pula as verificacoes e aponta para"
+  echo "    um prefixo hardcoded)"
+else
+  echo "   nenhum"
+fi
+
+# O winemenubuilder recria o atalho a cada reinstalacao do app. Desligá-lo
+# neste prefixo evita o duplicado voltar. Nao afeta outros prefixos.
+if [[ -d "${CONSPIT_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix}" ]]; then
+  WINEPREFIX="${CONSPIT_PREFIX:-${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix}" \
+  WINEDEBUG=-all wine reg add 'HKCU\Software\Wine\DllOverrides' \
+    /v winemenubuilder.exe /t REG_SZ /d "" /f >/dev/null 2>&1 \
+    && echo "   winemenubuilder desligado neste prefixo (nao recria)"
 fi
 
 atualizar_cache
