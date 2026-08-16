@@ -85,8 +85,8 @@ A qualquer momento, `tools/check-setup.sh` diz onde você está e o que falta.
 ## Pré-requisitos
 
 ```bash
-git clone https://github.com/juliscreudo/conspit-ares-linux.git ~/apps/conspit-ares-linux
-cd ~/apps/conspit-ares-linux
+git clone https://github.com/juliscreudo/conspit-linux-configurator.git ~/apps/conspit-linux-configurator
+cd ~/apps/conspit-linux-configurator
 ```
 
 ### Pacotes
@@ -248,7 +248,7 @@ proprietário (~300 MB), está no `.gitignore` e **não é redistribuído aqui**
 obtê-lo da Conspit.
 
 ```bash
-cd ~/apps/conspit-ares-linux        # a pasta do clone
+cd ~/apps/conspit-linux-configurator # a pasta do clone
 export WINEPREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/conspit-ares-linux/prefix"
 mkdir -p "$WINEPREFIX"
 

@@ -1,6 +1,6 @@
 # Conspit Ares Platinum 20Nm no Linux — análise e ferramentas
 
-Repo deste projeto: `~/apps/conspit-ares-linux/`.
+Repo deste projeto: `~/apps/conspit-linux-configurator/`.
 
 **Este arquivo contém o estado atual e as diretivas.** O *como* cada coisa foi descoberta —
 incluindo as conclusões erradas e por quê — está em
